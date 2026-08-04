@@ -42,10 +42,11 @@ export function formatInt(value: unknown): string {
   return intFmt.format(n);
 }
 
-/** `value` is a ratio (0.1234 -> "12.34%"). */
+/** `value` is a ratio (0.1234 -> "12.34%"). If value > 1 or < -1 (e.g. 12.34), it is already percentage-scaled. */
 export function formatRatioPct(value: unknown, digits = 2): string {
   const n = Number(value);
   if (value === null || value === undefined || !Number.isFinite(n)) return EM_DASH;
+  if (Math.abs(n) > 1.0) return `${n.toFixed(digits)}%`;
   return `${(n * 100).toFixed(digits)}%`;
 }
 
