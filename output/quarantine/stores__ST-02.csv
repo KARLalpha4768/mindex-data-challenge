@@ -1,0 +1,3 @@
+store_id,store_name,city,state,zip_code,region,opened_date,survivorship_outcome,deciding_criterion,null_count
+S007,Downtown Rochester,Rochester,NY,14604,Northeast,2006-01-22,ELECTED,lexicographic_store_name,0
+S007,Rochester Downtown,Rochester,NY,14604,Northeast,2006-01-22,REJECTED,lexicographic_store_name,0

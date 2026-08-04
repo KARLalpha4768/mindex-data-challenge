@@ -1,0 +1,2 @@
+product_id,product_name,category,unit_price,imputed_unit_price,note
+P027,Product P027,Apparel,0.0,126.96,0.00 read as missing; transactions independently ring P027 at 195.34

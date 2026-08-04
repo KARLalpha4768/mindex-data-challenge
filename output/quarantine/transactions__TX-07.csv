@@ -1,0 +1,6 @@
+source_row,transaction_id,transaction_date,store_id,product_id,customer_id,quantity,unit_price,total_amount,parsed_transaction_date,parsed_quantity,parsed_unit_price,parsed_total_amount,reason_code,reason_detail
+43,TXN10251,2026-04-07,S001,P025,CUST0037,0,140.26,0,2026-04-07,0,140.26,0.0,TX-07,"quantity == 0: economically empty row, excluded to protect the AOV denominator"
+282,TXN10253,2026-05-19,S007,P001,CUST0236,0,157.39,0,2026-05-19,0,157.39,0.0,TX-07,"quantity == 0: economically empty row, excluded to protect the AOV denominator"
+327,TXN10252,2026-04-23,S002,P022,CUST0249,0,216.88,0,2026-04-23,0,216.88,0.0,TX-07,"quantity == 0: economically empty row, excluded to protect the AOV denominator"
+386,TXN10254,2026-03-19,S004,P022,CUST0272,0,216.88,0,2026-03-19,0,216.88,0.0,TX-07,"quantity == 0: economically empty row, excluded to protect the AOV denominator"
+396,TXN10255,2026-05-14,S007,P004,CUST0181,0,10.53,0,2026-05-14,0,10.53,0.0,TX-07,"quantity == 0: economically empty row, excluded to protect the AOV denominator"

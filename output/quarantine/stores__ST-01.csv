@@ -1,0 +1,2 @@
+store_id,store_name,city,state,zip_code,region,opened_date,zip_code_padded,note
+S003,Greece Ridge Center,Greece,NY,0938,Northeast,2012-06-20,00938,padded to 5 chars; NOT verified as a real ZIP

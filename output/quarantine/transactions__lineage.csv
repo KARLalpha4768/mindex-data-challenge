@@ -1,0 +1,3 @@
+source_row,transaction_id,disposition,reason_code,reason_detail,total_amount_as_reported
+0,TXN001,kept,,,200.0
+1,TXN002,kept,,,300.0

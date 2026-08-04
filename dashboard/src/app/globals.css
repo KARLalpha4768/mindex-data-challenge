@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Global baseline.
+ *
+ * Deliberately small. Almost all styling is Tailwind utilities at the point of
+ * use; this file only carries things utilities cannot express well: the page
+ * background, focus-visible behaviour, scrollbar treatment, and the two
+ * component classes that would otherwise be repeated a dozen times verbatim.
+ */
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-base text-ink antialiased;
+  /* Subtle hairline grid. The only decorative element in the whole app, kept at
+     ~2% alpha so it reads as texture rather than as a pattern. */
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/*
+ * Focus. A visible, high-contrast ring on keyboard focus only — never removed,
+ * never replaced with `outline: none`. Everything interactive in this app is a
+ * real button or anchor so this rule reaches all of it.
+ */
+:where(a, button, [tabindex]:not([tabindex="-1"]), input, select, summary):focus-visible {
+  @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-base rounded-sm;
+}
+
+/* Scrollbars: present but quiet. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333a45 transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: #333a45;
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  /* Standard surface: every card, table container and panel uses this. */
+  .panel {
+    @apply rounded-lg border border-line bg-panel;
+  }
+
+  /* Table header cell. */
+  .th {
+    @apply px-3 py-2 text-left text-2xs font-medium uppercase tracking-wider text-ink-faint;
+  }
+
+  /* Table body cell. */
+  .td {
+    @apply px-3 py-2 align-top text-sm text-ink-dim;
+  }
+}
+
+/* Respect users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

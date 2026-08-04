@@ -1,0 +1,6 @@
+source_row,transaction_id,transaction_date,store_id,product_id,customer_id,quantity,unit_price,total_amount,parsed_transaction_date,parsed_quantity,parsed_unit_price,parsed_total_amount,reason_code,reason_detail
+149,TXN10151,2026-05-04,S016,P017,CUST0054,4,126.96,507.84,2026-05-04,4,126.96,507.84,TX-04,store_id is absent from the cleaned store dimension
+166,TXN10153,2026-05-06,S018,P020,CUST0020,4,26.47,105.88,2026-05-06,4,26.47,105.88,TX-04,store_id is absent from the cleaned store dimension
+212,TXN10152,2026-04-17,S017,P021,CUST0047,3,129.12,387.36,2026-04-17,3,129.12,387.36,TX-04,store_id is absent from the cleaned store dimension
+338,TXN10154,2026-05-02,S016,P030,CUST0141,2,76.48,152.96,2026-05-02,2,76.48,152.96,TX-04,store_id is absent from the cleaned store dimension
+423,TXN10155,2026-04-29,S019,P013,CUST0245,3,37.22,111.66,2026-04-29,3,37.22,111.66,TX-04,store_id is absent from the cleaned store dimension

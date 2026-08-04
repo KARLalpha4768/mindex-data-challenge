@@ -1,0 +1,16 @@
+source_row,transaction_id,transaction_date,store_id,product_id,customer_id,quantity,unit_price,total_amount,parsed_transaction_date,parsed_quantity,parsed_unit_price,parsed_total_amount,reason_code,reason_detail
+201,TXN10053,2026-05-09,S011,P004,CUST0044,5,10.53,52.65,2026-05-09,5,10.53,52.65,TX-09,byte-identical repeat of an earlier source row
+202,TXN10065,2026-05-20,S011,P028,CUST0003,1,69.62,69.62,2026-05-20,1,69.62,69.62,TX-09,byte-identical repeat of an earlier source row
+281,TXN10064,2026-04-14,S011,P020,CUST0176,5,26.47,132.35,2026-04-14,5,26.47,132.35,TX-09,byte-identical repeat of an earlier source row
+290,TXN10054,2026-04-15,S009,P027,CUST0093,4,195.34,781.36,2026-04-15,4,195.34,781.36,TX-09,byte-identical repeat of an earlier source row
+328,TXN10057,2026-03-07,S008,P012,CUST0170,1,123.17,123.17,2026-03-07,1,123.17,123.17,TX-09,byte-identical repeat of an earlier source row
+329,TXN10055,2026-03-21,S013,P027,CUST0093,3,195.34,586.02,2026-03-21,3,195.34,586.02,TX-09,byte-identical repeat of an earlier source row
+331,TXN10052,2026-03-31,S005,P005,CUST0069,2,141.61,283.22,2026-03-31,2,141.61,283.22,TX-09,byte-identical repeat of an earlier source row
+347,TXN10051,2026-04-14,S003,P024,CUST0224,2,196.2,392.4,2026-04-14,2,196.2,392.4,TX-09,byte-identical repeat of an earlier source row
+428,TXN10061,2026-03-26,S014,P016,CUST0017,5,24.52,122.6,2026-03-26,5,24.52,122.6,TX-09,byte-identical repeat of an earlier source row
+433,TXN10063,2026-04-15,S003,P002,CUST0127,5,147.38,736.9,2026-04-15,5,147.38,736.9,TX-09,byte-identical repeat of an earlier source row
+436,TXN10056,2026-04-21,S007,P023,CUST0274,3,108.28,324.84,2026-04-21,3,108.28,324.84,TX-09,byte-identical repeat of an earlier source row
+442,TXN10060,2026-05-17,S006,P026,CUST0280,4,54.13,216.52,2026-05-17,4,54.13,216.52,TX-09,byte-identical repeat of an earlier source row
+456,TXN10062,2026-04-18,S003,P025,CUST0173,1,140.26,140.26,2026-04-18,1,140.26,140.26,TX-09,byte-identical repeat of an earlier source row
+489,TXN10058,2026-05-12,S003,P020,CUST0001,5,26.47,132.35,2026-05-12,5,26.47,132.35,TX-09,byte-identical repeat of an earlier source row
+496,TXN10059,2026-05-31,S015,P024,CUST0042,1,196.2,196.2,2026-05-31,1,196.2,196.2,TX-09,byte-identical repeat of an earlier source row

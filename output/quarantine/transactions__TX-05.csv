@@ -1,0 +1,4 @@
+source_row,transaction_id,transaction_date,store_id,product_id,customer_id,quantity,unit_price,total_amount,parsed_transaction_date,parsed_quantity,parsed_unit_price,parsed_total_amount,reason_code,reason_detail
+94,TXN10157,2026-05-02,S008,P032,CUST0229,1,242.36,242.36,2026-05-02,1,242.36,242.36,TX-05,product_id is absent from the cleaned product dimension
+228,TXN10158,2026-05-19,S006,P031,CUST0254,2,123.17,246.34,2026-05-19,2,123.17,246.34,TX-05,product_id is absent from the cleaned product dimension
+487,TXN10156,2026-05-14,S001,P031,CUST0244,2,157.39,314.78,2026-05-14,2,157.39,314.78,TX-05,product_id is absent from the cleaned product dimension

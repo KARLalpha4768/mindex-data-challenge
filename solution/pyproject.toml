@@ -1,0 +1,66 @@
+# Project metadata and tool configuration.
+#
+# WHY this file exists even though the project is not distributed as a package:
+# it is where `ruff` and `pytest` are configured, and configuring them in one
+# committed file is what makes "ruff-clean" (contract §7.6) a checkable claim
+# rather than an opinion that varies by developer.
+
+[project]
+name = "mindex-data-challenge"
+version = "1.0.0"
+description = "Defect-aware ETL pipeline: raw CSV -> audited cleaning -> SQLite star schema -> analytics."
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0,<3.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.4"]
+
+[project.scripts]
+# Lets the pipeline be run as `mindex-pipeline` after `pip install -e .`.
+# `python -m src.pipeline` works without installing anything and is the
+# documented entry point in the README.
+mindex-pipeline = "src.pipeline:main"
+
+# ── Lint / format ─────────────────────────────────────────────────────────────
+[tool.ruff]
+# WHY 100 and not the default 88: this codebase is heavily annotated by design
+# (contract §7), and the explanatory comments read far better at 100 columns.
+line-length = 100
+target-version = "py310"
+extend-exclude = ["dashboard", "scripts/seed_data.py"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade -- keeps 3.10+ syntax consistent
+    "B",    # bugbear -- catches the mutable-default and loop-variable traps
+    "D",    # pydocstyle -- docstrings are a graded criterion here
+]
+ignore = [
+    "D203",  # conflicts with D211 (both cannot be satisfied)
+    "D213",  # conflicts with D212; we use summary-on-first-line
+    "E501",  # line length is enforced by the formatter, not the linter, so long
+             # prose strings in defects.py are not flagged twice
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Test functions document themselves through their names and assertions.
+"tests/*" = ["D103", "D100"]
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# WHY pythonpath = ["."]: the test suite imports `src.*` absolutely, exactly as
+# the pipeline does. Without this, tests would pass only when pytest happens to
+# be invoked from the repo root, which is the sort of thing that works locally
+# and fails in CI.
+pythonpath = ["."]
+addopts = "-q --strict-markers"

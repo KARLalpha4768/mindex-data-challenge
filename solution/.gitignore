@@ -1,0 +1,51 @@
+# ── Generated artifacts ───────────────────────────────────────────────────────
+# WHY ignore output/ but keep the directory: every file in here is reproducible
+# by running `python -m src.pipeline`, so committing them would create a second
+# source of truth that can silently disagree with the code. The .gitkeep is
+# negated below so the directory itself survives a clone and the pipeline does
+# not have to guess whether it may create it.
+output/*
+!output/.gitkeep
+*.db
+*.sqlite
+*.sqlite3
+
+# WHY: atomic JSON writes create these next to their target; a crash mid-write
+# can leave one behind and it must never be committed.
+.*.tmp
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.Python
+
+# ── Tooling caches ────────────────────────────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ── Dashboard (Next.js) ───────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.vercel
+npm-debug.log*
+yarn-error.log*
+
+# ── Editors / OS ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

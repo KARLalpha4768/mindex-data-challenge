@@ -1,0 +1,3 @@
+product_id,product_name,category,unit_price,supplier_id,conflicting_columns,elected
+P005,Product P005,Office Supplies,150.11,SUP005,unit_price,True
+P005,Product P005,Office Supplies,141.61,SUP005,unit_price,False

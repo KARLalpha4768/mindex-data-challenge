@@ -1,0 +1,4 @@
+source_row,transaction_id,transaction_date,store_id,product_id,customer_id,quantity,unit_price,total_amount,parsed_transaction_date,parsed_quantity,parsed_unit_price,parsed_total_amount,reason_code,reason_detail
+89,TXN10262,2026-06-18,S012,P030,CUST0112,2,76.48,152.96,2026-06-18,2,76.48,152.96,TX-08,transaction_date is after AS_OF_DATE
+311,TXN10263,2026-06-27,S008,P015,CUST0034,1,245.84,245.84,2026-06-27,1,245.84,245.84,TX-08,transaction_date is after AS_OF_DATE
+391,TXN10261,2026-06-10,S002,P007,CUST0133,3,104.92,314.76,2026-06-10,3,104.92,314.76,TX-08,transaction_date is after AS_OF_DATE
