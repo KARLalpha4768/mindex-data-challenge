@@ -1,4 +1,3 @@
 {
-  "buildCommand": "npm --prefix dashboard install && npm --prefix dashboard run build",
-  "outputDirectory": "dashboard/out"
+  "buildCommand": "npm --prefix dashboard install && npm --prefix dashboard run build"
 }
