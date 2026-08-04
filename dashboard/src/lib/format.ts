@@ -91,24 +91,21 @@ export function formatMetricCell(column: string, value: unknown): string {
 
   const name = column.toLowerCase();
   if (typeof value === "number") {
-    const isPctColumn = name.endsWith("_pct") || name.endsWith(" pct") || name.includes("pct");
-    const isGrowth = name.includes("growth") || name.includes("change");
+    const isPctOrRate =
+      name.includes("pct") ||
+      name.includes("rate") ||
+      name.includes("growth") ||
+      name.includes("change");
 
-    if (isPctColumn) {
-      if (isGrowth) return formatSignedPct(value, 2);
-      return formatAlreadyPct(value, 2);
+    if (isPctOrRate) {
+      const isGrowth = name.includes("growth") || name.includes("change");
+      // If value > 1 or < -1 (e.g. 12.5), it is already a 0-100 percentage.
+      // If value is between -1 and 1 (e.g. 0.125), it is a ratio to be scaled.
+      const pctValue = Math.abs(value) > 1.0 ? value : value * 100;
+      if (isGrowth) return formatSignedPct(pctValue, 2);
+      return formatAlreadyPct(pctValue, 2);
     }
 
-    if (name.includes("rate") || name.includes("pct_of")) {
-      // If value > 1 or < -1, it is already a 0-100 percentage (e.g. 12.5), not a 0-1 ratio (0.125)
-      if (Math.abs(value) > 1) {
-        if (isGrowth) return formatSignedPct(value, 2);
-        return formatAlreadyPct(value, 2);
-      }
-      return formatRatioPct(value, 2);
-    }
-
-    if (name.includes("growth")) return formatSignedPct(value, 2);
     if (
       name.includes("revenue") ||
       name.includes("amount") ||

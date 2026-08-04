@@ -2,13 +2,13 @@
   "run": {
     "pipeline_version": "1.0.0",
     "catalog_version": "1.0.0",
-    "generated_at": "2026-08-03T20:43:12",
+    "generated_at": "2026-08-04T12:01:43",
     "as_of_date": "2026-06-02",
     "recent_window_days": 30,
     "recent_window_start": "2026-05-04",
     "price_tolerance": 0.01,
     "return_rate_alert_threshold": 0.1,
-    "duration_seconds": 1.69,
+    "duration_seconds": 1.688,
     "raw_dir": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\data\\raw",
     "output_dir": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output",
     "row_counts": {
@@ -38,7 +38,7 @@
   },
   "defect_catalog": {
     "catalog_version": "1.0.0",
-    "generated_at": "2026-08-03T20:43:12",
+    "generated_at": "2026-08-04T12:01:43",
     "defect_class_count": 17,
     "by_dataset": {
       "stores": [
@@ -256,8 +256,8 @@
     ]
   },
   "audit": {
-    "generated_at": "2026-08-03T20:43:12",
-    "started_at": "2026-08-03T20:43:11",
+    "generated_at": "2026-08-04T12:01:43",
+    "started_at": "2026-08-04T12:01:42",
     "as_of_date": "2026-06-02",
     "catalog_version": "1.0.0",
     "totals": {
@@ -1023,7 +1023,7 @@
     ]
   },
   "profiling": {
-    "generated_at": "2026-08-03T20:43:11",
+    "generated_at": "2026-08-04T12:01:42",
     "as_of_date": "2026-06-02",
     "datasets": {
       "stores": {
@@ -12576,7 +12576,7 @@
     }
   },
   "analytics": {
-    "generated_at": "2026-08-03T20:43:12",
+    "generated_at": "2026-08-04T12:01:43",
     "as_of_date": "2026-06-02",
     "metric_count": 6,
     "metrics": {
