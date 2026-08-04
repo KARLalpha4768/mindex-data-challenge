@@ -6,6 +6,8 @@ This repository contains an end-to-end, production-minded Python 3.10+ and SQLit
 
 In addition, a **Next.js + React + Tailwind CSS interactive dashboard** (`dashboard/`) is included to visualize data quality findings, lineage, star schema structure, and SQL analytics linked directly to source code annotations.
 
+> 🌐 **Live Evidence Dashboard**: [https://karl-david-mindex-challenge3.vercel.app](https://karl-david-mindex-challenge3.vercel.app)
+
 ---
 
 ## 🏗️ Architecture Overview
