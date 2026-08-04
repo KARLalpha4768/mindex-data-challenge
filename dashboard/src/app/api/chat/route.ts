@@ -34,5 +34,3 @@ ${readmeContent}
     return NextResponse.json({ error: 'Failed to generate response' }, { status: 500 });
   }
 }
-  }
-}
