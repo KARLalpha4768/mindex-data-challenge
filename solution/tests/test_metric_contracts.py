@@ -459,7 +459,7 @@ class TestReconciliationDeltaIsFalsifiable:
         That constraint is genuine defence-in-depth, and asserting it here keeps
         the bypass honest — if the CHECK were ever dropped, this fails.
         """
-        schema_text = (Path(__file__).resolve().parents[1] / "src" / "warehouse" / "schema.sql").read_text()
+        schema_text = (Path(__file__).resolve().parents[1] / "src" / "warehouse" / "schema.sql").read_text(encoding="utf-8")
         normalized = " ".join(schema_text.split())
         assert "ABS(discount_amount - (extended_amount - net_amount))" in normalized, (
             "fact_sales must keep its per-row discount CHECK; it is the constraint "

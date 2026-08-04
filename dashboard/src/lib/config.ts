@@ -2,9 +2,16 @@
  * Deployment-time constants.
  *
  * Everything a fork would need to change lives in this file. Deliberately not
- * environment variables: `output: "export"` means there is no server to read
- * them at runtime, and a reviewer should be able to see the configuration by
- * reading one short file rather than hunting for a Vercel dashboard setting.
+ * environment variables: a reviewer should be able to see the configuration by
+ * reading one short file rather than hunting for a Vercel dashboard setting,
+ * and none of it is secret — these values are compiled into the client bundle
+ * and are public by construction.
+ *
+ * The one genuine secret in this project, `GEMINI_API_KEY`, is therefore NOT
+ * here. It is read from `process.env` inside `src/lib/chatHandler.ts`, which
+ * only the server-side `/api/chat` route imports. The rule that separates the
+ * two files: if it can appear in the browser's view-source, it belongs here; if
+ * it cannot, it must never be imported by a `"use client"` module.
  */
 
 /**

@@ -242,10 +242,10 @@ class FigureSpec:
 # its region rather than by the position it happens to sort into today.
 RECON = "metrics.revenue_reconciliation.rows.0"
 TOP_STORES = "metrics.top_stores_recent_30d.rows"
-AOV = "metrics.aov_by_region.rows"
+AOV = "metrics.avg_txn_value_by_region.rows"
 RETURNS = "metrics.return_rate_by_store.rows"
 CUSTOMERS = "metrics.top_customers_lifetime.rows"
-MOM = "metrics.mom_growth_by_category.rows"
+MOM = "metrics.mom_revenue_by_category.rows"
 COUNTS = "pipeline.row_counts"
 
 FIGURES: dict[str, FigureSpec] = {
@@ -313,8 +313,7 @@ FIGURES: dict[str, FigureSpec] = {
     "gross_net_of_discount": FigureSpec("analytics", f"{RECON}.gross_sales_net_of_discount", "money"),
     "returns_value": FigureSpec("analytics", f"{RECON}.returns_value", "money"),
     "net_revenue": FigureSpec("analytics", f"{RECON}.net_revenue", "money"),
-    "line_level_delta": FigureSpec("analytics", f"{RECON}.line_level_delta", "money"),
-    "aggregate_delta": FigureSpec("analytics", f"{RECON}.aggregate_delta", "money"),
+    "reconciliation_delta": FigureSpec("analytics", f"{RECON}.reconciliation_delta", "money"),
     "discount_rows": FigureSpec("db", "discount_rows", "int"),
     "discount_share_pct": FigureSpec("db", "discount_share_pct", "percent"),
 
@@ -365,7 +364,7 @@ FIGURES: dict[str, FigureSpec] = {
     "cust3_spend": FigureSpec("analytics", f"{CUSTOMERS}.2.lifetime_spend", "money"),
 
     # ── Month over month (F9 caveat, made checkable) ──────────────────────────
-    "mom_rows": FigureSpec("analytics", "metrics.mom_growth_by_category.row_count", "int"),
+    "mom_rows": FigureSpec("analytics", "metrics.mom_revenue_by_category.row_count", "int"),
     "days_march": FigureSpec("db", "days_2026_03", "int"),
     "days_june": FigureSpec("db", "days_2026_06", "int"),
     "fb_april_pct": FigureSpec(
@@ -381,7 +380,7 @@ FIGURES: dict[str, FigureSpec] = {
         "A reading from the only two complete months",
     ),
     "apparel_june_days": FigureSpec(
-        "analytics", f"{MOM}.category=Apparel;year_month=2026-06.days_with_data", "int",
+        "db", "days_2026_06", "int",
     ),
 
     # ── The three judgement calls ─────────────────────────────────────────────

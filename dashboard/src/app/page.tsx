@@ -10,11 +10,13 @@ import { buildDefectViews, discountImpact, loadBundle } from "@/lib/bundle";
  *   - hand the result to the client Dashboard as props
  *
  * The browser therefore receives fully-formed data inside the pre-rendered
- * HTML. No fetch, no loading spinner, no waterfall — which is the whole point
- * of shipping this as a static export.
+ * HTML. No fetch, no loading spinner, no waterfall.
  *
- * `force-static` is redundant under `output: "export"` but states the intent
- * explicitly for anyone reading this file alone.
+ * `force-static` used to be redundant under `output: "export"`. It is now
+ * load-bearing: the app has a server (it needs one for `/api/chat`, which holds
+ * an API key), and this line is what keeps the *page* a build-time artefact
+ * rather than something re-rendered per request. The only dynamic surface in
+ * the deployment is that one API route.
  */
 export const dynamic = "force-static";
 

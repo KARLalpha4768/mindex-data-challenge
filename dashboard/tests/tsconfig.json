@@ -1,0 +1,27 @@
+{
+  /*
+   * Test-only compile. The app's own tsconfig is `noEmit` and targets the
+   * bundler's module resolution, neither of which lets `node` run the result.
+   * This one emits plain CommonJS into `.test-build/` so the suite runs with
+   * nothing installed but TypeScript itself — no jest, no vitest, no ts-node.
+   *
+   * A test runner would be the right call for a real application. For eleven
+   * assertions in a review artefact, a dependency a reviewer has to install is
+   * a worse trade than twenty lines of harness.
+   */
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "dom"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": false,
+    "outDir": "../.test-build",
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "../src/lib/**/*.ts"]
+}

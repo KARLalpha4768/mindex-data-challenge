@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-03T20:43:12",
-  "started_at": "2026-08-03T20:43:11",
+  "generated_at": "2026-08-04T19:06:37",
+  "started_at": "2026-08-04T19:06:36",
   "as_of_date": "2026-06-02",
   "catalog_version": "1.0.0",
   "totals": {
@@ -111,7 +111,7 @@
       "expected_count": 1,
       "count_matches": true,
       "action": "flagged",
-      "notes": "Key collision with DISAGREEING payload -- a data event, not a duplicate. P005 -> conflicting unit_price: 141.61 vs 150.11 (delta $8.50); elected unit_price=150.11 by policy. Election is by MAX, never by file order: the source shuffle puts 150.11 physically first, so keep='first' would pick correctly today and arbitrarily tomorrow. Assumption stated for contradiction: the appended, higher record is the newer list price. Revenue is unaffected either way because fact_sales.unit_price is the transacted price -- all 20 P005 transactions rang at 141.61 and none at 150.11, so the increase post-dates the transaction window. The correct long-term fix is a Type-2 dimension with effective dates, which this source cannot support: it carries no date on the price.",
+      "notes": "Key collision with DISAGREEING payload -- a data event, not a duplicate. P005 -> conflicting unit_price: 141.61 vs 150.11 (delta $8.50); elected unit_price=150.11 [runtime-verified: elected unit_price == MAX(141.61, 150.11)] by policy. Election is by MAX, never by file order: the source shuffle puts 150.11 physically first, so keep='first' would pick correctly today and arbitrarily tomorrow. Assumption stated for contradiction: the appended, higher record is the newer list price. Revenue is unaffected either way because fact_sales.unit_price is the transacted price -- all 20 P005 transactions rang at 141.61 and none at 150.11, so the increase post-dates the transaction window. The correct long-term fix is a Type-2 dimension with effective dates, which this source cannot support: it carries no date on the price.",
       "merged_from_calls": 1,
       "affected_keys": [
         "P005"
@@ -552,16 +552,16 @@
     }
   ],
   "quarantine_files": {
-    "stores__ST-01": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\stores__ST-01.csv",
-    "stores__ST-02": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\stores__ST-02.csv",
-    "products__PR-01": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\products__PR-01.csv",
-    "products__PR-02": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\products__PR-02.csv",
-    "products__PR-04": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\products__PR-04.csv",
-    "transactions__TX-07": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\transactions__TX-07.csv",
-    "transactions__TX-08": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\transactions__TX-08.csv",
-    "transactions__TX-04": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\transactions__TX-04.csv",
-    "transactions__TX-05": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\transactions__TX-05.csv",
-    "transactions__TX-09": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output\\quarantine\\transactions__TX-09.csv"
+    "stores__ST-01": "/tmp/attach_out/quarantine/stores__ST-01.csv",
+    "stores__ST-02": "/tmp/attach_out/quarantine/stores__ST-02.csv",
+    "products__PR-01": "/tmp/attach_out/quarantine/products__PR-01.csv",
+    "products__PR-02": "/tmp/attach_out/quarantine/products__PR-02.csv",
+    "products__PR-04": "/tmp/attach_out/quarantine/products__PR-04.csv",
+    "transactions__TX-07": "/tmp/attach_out/quarantine/transactions__TX-07.csv",
+    "transactions__TX-08": "/tmp/attach_out/quarantine/transactions__TX-08.csv",
+    "transactions__TX-04": "/tmp/attach_out/quarantine/transactions__TX-04.csv",
+    "transactions__TX-05": "/tmp/attach_out/quarantine/transactions__TX-05.csv",
+    "transactions__TX-09": "/tmp/attach_out/quarantine/transactions__TX-09.csv"
   },
   "summary_table": [
     {
@@ -768,63 +768,63 @@
     "ST-01": [
       {
         "file": "src/cleaning/stores.py",
-        "line": 185,
+        "line": 218,
         "snippet": "zips[paddable].str.zfill(ZIP_CODE_LENGTH).astype(object)  # DEFECT: ST-01"
       }
     ],
     "ST-02": [
       {
         "file": "src/cleaning/stores.py",
-        "line": 362,
+        "line": 419,
         "snippet": "winners = ranked.groupby(BUSINESS_KEY, sort=False).head(1)  # DEFECT: ST-02"
       }
     ],
     "ST-03": [
       {
         "file": "src/cleaning/stores.py",
-        "line": 555,
+        "line": 624,
         "snippet": "out.loc[missing_mask, \"region\"] = imputed_values  # DEFECT: ST-03"
       }
     ],
     "PR-01": [
       {
         "file": "src/cleaning/products.py",
-        "line": 286,
+        "line": 293,
         "snippet": "out = out.loc[~duplicate_mask].copy()  # DEFECT: PR-01"
       }
     ],
     "PR-02": [
       {
         "file": "src/cleaning/products.py",
-        "line": 370,
+        "line": 377,
         "snippet": "winner[column] = policy(group[column])  # DEFECT: PR-02"
       }
     ],
     "PR-03": [
       {
         "file": "src/cleaning/products.py",
-        "line": 631,
+        "line": 691,
         "snippet": "out.loc[missing_mask, \"category\"] = UNKNOWN_CATEGORY  # DEFECT: PR-03"
       }
     ],
     "PR-04": [
       {
         "file": "src/cleaning/products.py",
-        "line": 564,
+        "line": 624,
         "snippet": "out.at[idx, \"unit_price\"] = f\"{value:.2f}\"  # DEFECT: PR-04"
       }
     ],
     "TX-01": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 359,
+        "line": 367,
         "snippet": "# DEFECT: TX-01"
       }
     ],
     "TX-02": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 440,
+        "line": 448,
         "snippet": "# DEFECT: TX-02"
       }
     ],
@@ -836,56 +836,56 @@
       },
       {
         "file": "src/cleaning/transactions.py",
-        "line": 928,
+        "line": 936,
         "snippet": "# DEFECT: TX-03"
       }
     ],
     "TX-04": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 821,
+        "line": 829,
         "snippet": "# DEFECT: TX-04"
       }
     ],
     "TX-05": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 823,
+        "line": 831,
         "snippet": "# DEFECT: TX-05"
       }
     ],
     "TX-06": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 518,
+        "line": 526,
         "snippet": "# DEFECT: TX-06"
       }
     ],
     "TX-07": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 662,
+        "line": 670,
         "snippet": "# DEFECT: TX-07"
       }
     ],
     "TX-08": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 736,
+        "line": 744,
         "snippet": "# DEFECT: TX-08"
       }
     ],
     "TX-09": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 269,
+        "line": 277,
         "snippet": "# DEFECT: TX-09"
       }
     ],
     "TX-10": [
       {
         "file": "src/cleaning/transactions.py",
-        "line": 589,
+        "line": 597,
         "snippet": "# DEFECT: TX-10"
       }
     ]
@@ -893,8 +893,8 @@
   "pipeline": {
     "version": "1.0.0",
     "as_of_date": "2026-06-02",
-    "raw_dir": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\data\\raw",
-    "output_dir": "E:\\OneDrive\\Desktop\\Data Engineer Code Challenge\\output",
+    "raw_dir": "/sessions/zen-inspiring-feynman/mnt/Data Engineer Code Challenge/solution/data/raw",
+    "output_dir": "/tmp/attach_out",
     "row_counts": {
       "raw": {
         "stores": 16,

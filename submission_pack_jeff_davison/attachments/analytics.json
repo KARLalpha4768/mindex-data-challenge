@@ -1,14 +1,22 @@
 {
-  "generated_at": "2026-08-03T20:43:12",
+  "generated_at": "2026-08-04T19:06:37",
   "as_of_date": "2026-06-02",
   "metric_count": 6,
   "metrics": {
     "top_stores_recent_30d": {
-      "title": "Top 5 Stores by Net Revenue (Recent 30 Days)",
-      "description": "Ranked by net sales revenue (sales minus returns) during the trailing 30-day window ending on as_of_date.",
+      "title": "Top 5 stores by net revenue (trailing 30 days)",
+      "description": "Store ranking over the 30 days ending on AS_OF_DATE, with returns netted against sales rather than excluded.",
       "definition_note": "Net revenue = SUM(net_amount) over all transactions (sales + returns) in the trailing 30-day window ending on AS_OF_DATE. Returns reduce revenue by their signed net_amount; they are not excluded.",
       "sql": "-- Q1: Top 5 stores by net revenue in the most recent 30-day window.\n-- Returns should reduce revenue, not be excluded — SUM(net_amount) handles\n-- this by sign: positive sales + negative returns = net.\nSELECT\n    s.store_id,\n    s.store_name,\n    s.region,\n    ROUND(SUM(f.net_amount), 2)   AS net_revenue,\n    COUNT(*)                      AS transaction_count,\n    SUM(CASE WHEN f.is_return = 1 THEN 1 ELSE 0 END) AS return_count\nFROM fact_sales f\nJOIN dim_store   s ON f.store_key = s.store_key\nJOIN dim_date    d ON f.date_key  = d.date_key\nWHERE d.full_date BETWEEN :window_start AND :as_of_date\nGROUP BY s.store_key, s.store_id, s.store_name, s.region\nORDER BY net_revenue DESC\nLIMIT 5;",
       "sql_ref": "src/analytics/queries.py:TOP_STORES_RECENT_30D",
+      "column_units": {
+        "store_id": "text",
+        "store_name": "text",
+        "region": "text",
+        "transaction_count": "integer",
+        "return_count": "integer",
+        "net_revenue": "currency"
+      },
       "row_count": 5,
       "rows": [
         {
@@ -53,17 +61,26 @@
         }
       ]
     },
-    "mom_revenue_by_category": {
-      "title": "Month-over-Month Revenue Growth by Category",
-      "description": "Monthly net revenue and percentage change vs prior month grouped by product category.",
-      "definition_note": "Month-over-month % change in net revenue by product category, using LAG over year_month. A NULL change means the previous month had zero or no revenue (division by zero is avoided via NULLIF).",
-      "sql": "-- Q2: Month-over-month revenue change (%) by product category.\n-- Uses LAG over (year_month) to compare each month to its predecessor.\nWITH monthly AS (\n    SELECT\n        p.category,\n        d.year_month,\n        ROUND(SUM(f.net_amount), 2) AS monthly_revenue\n    FROM fact_sales   f\n    JOIN dim_product  p ON f.product_key = p.product_key\n    JOIN dim_date     d ON f.date_key    = d.date_key\n    GROUP BY p.category, d.year_month\n),\nwith_lag AS (\n    SELECT\n        category,\n        year_month,\n        monthly_revenue,\n        LAG(monthly_revenue) OVER (\n            PARTITION BY category ORDER BY year_month\n        ) AS prev_month_revenue\n    FROM monthly\n)\nSELECT\n    category,\n    year_month,\n    monthly_revenue,\n    prev_month_revenue,\n    ROUND(\n        (monthly_revenue - prev_month_revenue)\n        / NULLIF(prev_month_revenue, 0) * 100.0,\n        2\n    ) AS mom_change_pct\nFROM with_lag\nORDER BY category, year_month;",
-      "sql_ref": "src/analytics/queries.py:MOM_REVENUE_BY_CATEGORY",
+    "mom_growth_by_category": {
+      "title": "Month-over-month revenue growth by category",
+      "description": "Revenue per category per calendar month with the prior month carried alongside, so every percentage can be checked by hand. days_with_data states how many dates each figure rests on, because the first and last months of this extract are partial.",
+      "definition_note": "Month-over-month % change in net revenue by product category, using LAG over year_month. A NULL change means the previous month had zero or no revenue (division by zero is avoided via NULLIF). CAVEAT — PARTIAL MONTHS AT THE EXTRACT BOUNDARY: the first and last months of this dataset are not full months. 2026-03 contains 27 transacting days and 2026-06 contains exactly ONE (2026-06-01, the day before AS_OF_DATE). The large negative changes shown for 2026-06 (down to -99%) and the +403% shown for Food & Beverage in 2026-04 are therefore artefacts of where the extract was cut, not business signals: they compare a one-day month against a thirty-day one. The days_with_data column gives the count of distinct dates on which THAT CATEGORY transacted in that month — so it is per row, and is at most the month's dataset-wide figure quoted above — which makes the comparison's asymmetry visible rather than implied. Any month-over-month reading should be restricted to 2026-04 vs 2026-05, the only two complete months here.",
+      "sql": "-- Q2: Month-over-month revenue change (%) by product category.\n-- Uses LAG over (year_month) to compare each month to its predecessor.\n-- days_with_data reports how many distinct dates that category actually\n-- transacted on in that month, because the first and last months of this\n-- extract are partial (see F9 note above the constant).\nWITH monthly AS (\n    SELECT\n        p.category,\n        d.year_month,\n        ROUND(SUM(f.net_amount), 2)  AS monthly_revenue,\n        COUNT(DISTINCT d.full_date)  AS days_with_data\n    FROM fact_sales   f\n    JOIN dim_product  p ON f.product_key = p.product_key\n    JOIN dim_date     d ON f.date_key    = d.date_key\n    GROUP BY p.category, d.year_month\n),\nwith_lag AS (\n    SELECT\n        category,\n        year_month,\n        monthly_revenue,\n        days_with_data,\n        LAG(monthly_revenue) OVER (\n            PARTITION BY category ORDER BY year_month\n        ) AS prev_month_revenue\n    FROM monthly\n)\nSELECT\n    category,\n    year_month,\n    days_with_data,\n    monthly_revenue,\n    prev_month_revenue,\n    ROUND(\n        (monthly_revenue - prev_month_revenue)\n        / NULLIF(prev_month_revenue, 0) * 100.0,\n        2\n    ) AS mom_change_pct\nFROM with_lag\nORDER BY category, year_month;",
+      "sql_ref": "src/analytics/queries.py:MOM_GROWTH_BY_CATEGORY",
+      "column_units": {
+        "category": "text",
+        "year_month": "text",
+        "days_with_data": "integer",
+        "monthly_revenue": "currency",
+        "prev_month_revenue": "currency",
+        "mom_change_pct": "percent"
+      },
       "row_count": 22,
       "rows": [
         {
           "category": "Apparel",
           "year_month": "2026-03",
+          "days_with_data": 19,
           "monthly_revenue": 9844.6,
           "prev_month_revenue": null,
           "mom_change_pct": null
@@ -71,6 +88,7 @@
         {
           "category": "Apparel",
           "year_month": "2026-04",
+          "days_with_data": 17,
           "monthly_revenue": 11032.38,
           "prev_month_revenue": 9844.6,
           "mom_change_pct": 12.07
@@ -78,6 +96,7 @@
         {
           "category": "Apparel",
           "year_month": "2026-05",
+          "days_with_data": 20,
           "monthly_revenue": 14304.78,
           "prev_month_revenue": 11032.38,
           "mom_change_pct": 29.66
@@ -85,6 +104,7 @@
         {
           "category": "Apparel",
           "year_month": "2026-06",
+          "days_with_data": 1,
           "monthly_revenue": 584.27,
           "prev_month_revenue": 14304.78,
           "mom_change_pct": -95.92
@@ -92,6 +112,7 @@
         {
           "category": "Electronics",
           "year_month": "2026-03",
+          "days_with_data": 8,
           "monthly_revenue": 4015.66,
           "prev_month_revenue": null,
           "mom_change_pct": null
@@ -99,6 +120,7 @@
         {
           "category": "Electronics",
           "year_month": "2026-04",
+          "days_with_data": 14,
           "monthly_revenue": 7313.81,
           "prev_month_revenue": 4015.66,
           "mom_change_pct": 82.13
@@ -106,6 +128,7 @@
         {
           "category": "Electronics",
           "year_month": "2026-05",
+          "days_with_data": 19,
           "monthly_revenue": 12402.46,
           "prev_month_revenue": 7313.81,
           "mom_change_pct": 69.58
@@ -113,6 +136,7 @@
         {
           "category": "Electronics",
           "year_month": "2026-06",
+          "days_with_data": 1,
           "monthly_revenue": 157.39,
           "prev_month_revenue": 12402.46,
           "mom_change_pct": -98.73
@@ -120,6 +144,7 @@
         {
           "category": "Food & Beverage",
           "year_month": "2026-03",
+          "days_with_data": 10,
           "monthly_revenue": 1198.94,
           "prev_month_revenue": null,
           "mom_change_pct": null
@@ -127,6 +152,7 @@
         {
           "category": "Food & Beverage",
           "year_month": "2026-04",
+          "days_with_data": 14,
           "monthly_revenue": 6033.43,
           "prev_month_revenue": 1198.94,
           "mom_change_pct": 403.23
@@ -134,6 +160,7 @@
         {
           "category": "Food & Beverage",
           "year_month": "2026-05",
+          "days_with_data": 15,
           "monthly_revenue": 7902.99,
           "prev_month_revenue": 6033.43,
           "mom_change_pct": 30.99
@@ -141,6 +168,7 @@
         {
           "category": "Home & Garden",
           "year_month": "2026-03",
+          "days_with_data": 10,
           "monthly_revenue": 2199.83,
           "prev_month_revenue": null,
           "mom_change_pct": null
@@ -148,6 +176,7 @@
         {
           "category": "Home & Garden",
           "year_month": "2026-04",
+          "days_with_data": 13,
           "monthly_revenue": 2717.62,
           "prev_month_revenue": 2199.83,
           "mom_change_pct": 23.54
@@ -155,6 +184,7 @@
         {
           "category": "Home & Garden",
           "year_month": "2026-05",
+          "days_with_data": 18,
           "monthly_revenue": 4658.36,
           "prev_month_revenue": 2717.62,
           "mom_change_pct": 71.41
@@ -162,6 +192,7 @@
         {
           "category": "Home & Garden",
           "year_month": "2026-06",
+          "days_with_data": 1,
           "monthly_revenue": 64.05,
           "prev_month_revenue": 4658.36,
           "mom_change_pct": -98.63
@@ -169,6 +200,7 @@
         {
           "category": "Office Supplies",
           "year_month": "2026-03",
+          "days_with_data": 22,
           "monthly_revenue": 18496.95,
           "prev_month_revenue": null,
           "mom_change_pct": null
@@ -176,6 +208,7 @@
         {
           "category": "Office Supplies",
           "year_month": "2026-04",
+          "days_with_data": 23,
           "monthly_revenue": 19855.01,
           "prev_month_revenue": 18496.95,
           "mom_change_pct": 7.34
@@ -183,6 +216,7 @@
         {
           "category": "Office Supplies",
           "year_month": "2026-05",
+          "days_with_data": 19,
           "monthly_revenue": 12025.25,
           "prev_month_revenue": 19855.01,
           "mom_change_pct": -39.43
@@ -190,6 +224,7 @@
         {
           "category": "Unknown",
           "year_month": "2026-03",
+          "days_with_data": 18,
           "monthly_revenue": 5939.29,
           "prev_month_revenue": null,
           "mom_change_pct": null
@@ -197,6 +232,7 @@
         {
           "category": "Unknown",
           "year_month": "2026-04",
+          "days_with_data": 16,
           "monthly_revenue": 7290.97,
           "prev_month_revenue": 5939.29,
           "mom_change_pct": 22.76
@@ -204,6 +240,7 @@
         {
           "category": "Unknown",
           "year_month": "2026-05",
+          "days_with_data": 22,
           "monthly_revenue": 9932.69,
           "prev_month_revenue": 7290.97,
           "mom_change_pct": 36.23
@@ -211,6 +248,7 @@
         {
           "category": "Unknown",
           "year_month": "2026-06",
+          "days_with_data": 1,
           "monthly_revenue": 73.56,
           "prev_month_revenue": 9932.69,
           "mom_change_pct": -99.26
@@ -218,11 +256,23 @@
       ]
     },
     "return_rate_by_store": {
-      "title": "Return Rate by Store (Transaction & Unit Rates)",
-      "description": "Store return metrics evaluating return rate against the 10% alert threshold.",
-      "definition_note": "Two return rates reported: transaction-count-based (return txns / total txns) and unit-based (returned units / total units). The >10% flag is applied to the unit-based rate. Both are shown because the two denominators give materially different answers.",
+      "title": "Return rate by store, with >10% alert",
+      "description": "Both defensible denominators reported side by side, because the choice of denominator changes which stores breach the threshold.",
+      "definition_note": "Two return rates reported: transaction-count-based (return txns / total txns) and unit-based (returned units / total units). The >10% flag is applied to the unit-based rate. Both are shown because the two denominators give materially different answers. DELIBERATE DEVIATION FROM CONTRACT §6, STATED RATHER THAN SILENT: the contract specifies the unit rate as SUM(returned units) / SUM(sold units); this query uses returned / (sold + returned) instead. Reason: the contracted form is a returns-to-sales ratio, which is unbounded and can exceed 100% when a period's returns settle against an earlier period's sales — a figure that reads as an error to anyone seeing it on a dashboard. The denominator used here is total units moved, so the result is a genuine proportion bounded at 100% and answers the question 'what share of everything that crossed the counter came back?'. The choice is material but not decisive: under the contracted denominator S006 reads 15.91% rather than 13.73%, and the set of stores breaching the 10% threshold is identical either way (S006, S015, S008), so no flag, alert or ranking changes. Both numerators and both denominators are published as columns, so either rate can be recomputed from this table without rerunning anything.",
       "sql": "-- Q3: Return rate by store (unit-based and txn-based).\n-- Flag any store where unit-based return rate exceeds the configured threshold.\nSELECT\n    s.store_id,\n    s.store_name,\n    s.region,\n    -- Transaction-count-based rate (what the challenge literally says)\n    COUNT(*)                                                      AS total_transactions,\n    SUM(CASE WHEN f.is_return = 1 THEN 1 ELSE 0 END)             AS return_transactions,\n    ROUND(\n        CAST(SUM(CASE WHEN f.is_return = 1 THEN 1 ELSE 0 END) AS REAL)\n        / NULLIF(COUNT(*), 0) * 100.0, 2\n    )                                                             AS txn_return_rate_pct,\n    -- Unit-based rate (the more conventional retail metric)\n    SUM(CASE WHEN f.is_return = 0 THEN ABS(f.quantity) ELSE 0 END) AS units_sold,\n    SUM(CASE WHEN f.is_return = 1 THEN ABS(f.quantity) ELSE 0 END) AS units_returned,\n    ROUND(\n        CAST(SUM(CASE WHEN f.is_return = 1 THEN ABS(f.quantity) ELSE 0 END) AS REAL)\n        / NULLIF(SUM(ABS(f.quantity)), 0) * 100.0, 2\n    )                                                             AS unit_return_rate_pct,\n    -- Flag: 1 if the unit-based rate exceeds the threshold\n    CASE\n        WHEN CAST(SUM(CASE WHEN f.is_return = 1 THEN ABS(f.quantity) ELSE 0 END) AS REAL)\n             / NULLIF(SUM(ABS(f.quantity)), 0) > :return_rate_threshold\n        THEN 1 ELSE 0\n    END                                                           AS exceeds_threshold\nFROM fact_sales f\nJOIN dim_store  s ON f.store_key = s.store_key\nGROUP BY s.store_key, s.store_id, s.store_name, s.region\nORDER BY unit_return_rate_pct DESC;",
       "sql_ref": "src/analytics/queries.py:RETURN_RATE_BY_STORE",
+      "column_units": {
+        "store_id": "text",
+        "store_name": "text",
+        "region": "text",
+        "total_transactions": "integer",
+        "return_transactions": "integer",
+        "txn_return_rate_pct": "percent",
+        "units_sold": "integer",
+        "units_returned": "integer",
+        "unit_return_rate_pct": "percent",
+        "exceeds_threshold": "flag"
+      },
       "row_count": 15,
       "rows": [
         {
@@ -407,12 +457,18 @@
         }
       ]
     },
-    "avg_txn_value_by_region": {
-      "title": "Average Transaction Value by Store Region",
-      "description": "Average spend per non-return transaction grouped by geographical store region.",
+    "aov_by_region": {
+      "title": "Average transaction value by region",
+      "description": "Regional AOV. Depends directly on the ST-03 region imputation, which is why that decision is flagged in dim_store.",
       "definition_note": "Average transaction value = AVG(net_amount) over non-return transactions, grouped by store region. Return transactions are excluded per the challenge specification.",
       "sql": "-- Q4: Average transaction value by region (return transactions excluded).\nSELECT\n    s.region,\n    COUNT(*)                          AS transaction_count,\n    ROUND(SUM(f.net_amount), 2)       AS total_revenue,\n    ROUND(AVG(f.net_amount), 2)       AS avg_transaction_value\nFROM fact_sales f\nJOIN dim_store  s ON f.store_key = s.store_key\nWHERE f.is_return = 0\nGROUP BY s.region\nORDER BY avg_transaction_value DESC;",
-      "sql_ref": "src/analytics/queries.py:AVG_TXN_VALUE_BY_REGION",
+      "sql_ref": "src/analytics/queries.py:AOV_BY_REGION",
+      "column_units": {
+        "region": "text",
+        "transaction_count": "integer",
+        "total_revenue": "currency",
+        "avg_transaction_value": "currency"
+      },
       "row_count": 4,
       "rows": [
         {
@@ -442,11 +498,17 @@
       ]
     },
     "top_customers_lifetime": {
-      "title": "Top 10 Customers by Lifetime Spend",
-      "description": "Highest-value named customers excluding anonymous guest checkouts.",
+      "title": "Top 10 customers by lifetime spend",
+      "description": "Registered customers only. The GUEST sentinel is excluded and the exclusion is stated rather than assumed.",
       "definition_note": "Top 10 customers by SUM(net_amount). Guest/anonymous transactions (customer_id = 'GUEST', the TX-06 sentinel) are excluded because the 40 guest rows represent an unknown number of distinct people; including them would create an artificial whale that dominates the leaderboard by construction.",
       "sql": "-- Q5: Top 10 customers by lifetime spend (guest/anonymous excluded).\n-- Includes transaction count and average order value per customer.\nSELECT\n    c.customer_id,\n    COUNT(*)                          AS transaction_count,\n    ROUND(SUM(f.net_amount), 2)       AS lifetime_spend,\n    ROUND(AVG(f.net_amount), 2)       AS avg_order_value\nFROM fact_sales   f\nJOIN dim_customer c ON f.customer_key = c.customer_key\nWHERE c.is_guest = 0\nGROUP BY c.customer_key, c.customer_id\nORDER BY lifetime_spend DESC\nLIMIT 10;",
       "sql_ref": "src/analytics/queries.py:TOP_CUSTOMERS_LIFETIME",
+      "column_units": {
+        "customer_id": "text",
+        "transaction_count": "integer",
+        "lifetime_spend": "currency",
+        "avg_order_value": "currency"
+      },
       "row_count": 10,
       "rows": [
         {
@@ -465,7 +527,7 @@
           "customer_id": "CUST0287",
           "transaction_count": 4,
           "lifetime_spend": 2825.7,
-          "avg_order_value": 706.42
+          "avg_order_value": 706.43
         },
         {
           "customer_id": "CUST0060",
@@ -507,16 +569,25 @@
           "customer_id": "CUST0118",
           "transaction_count": 2,
           "lifetime_spend": 1655.79,
-          "avg_order_value": 827.89
+          "avg_order_value": 827.9
         }
       ]
     },
     "revenue_reconciliation": {
-      "title": "Revenue Reconciliation & Silent Discount Verification",
-      "description": "Tie-out reconciling gross list value, silent discount total, and net revenue.",
-      "definition_note": "Proof-of-work for TX-03. Ties gross list value (qty × unit_price) to discount total to net revenue. If the 20 silent discounts were recomputed away, discount_total would be $0.00 and this metric would be the only place that absence is visible.",
-      "sql": "-- Q6 (bonus): Revenue reconciliation — ties gross, discount and net.\n-- This is the TX-03 proof: if discounts were recomputed away, discount_total = 0.\nSELECT\n    ROUND(SUM(CASE WHEN is_return = 0 THEN extended_amount ELSE 0 END), 2)\n        AS gross_list_value,\n    ROUND(SUM(CASE WHEN is_return = 0 THEN discount_amount ELSE 0 END), 2)\n        AS discount_total,\n    ROUND(SUM(CASE WHEN is_return = 0 THEN net_amount ELSE 0 END), 2)\n        AS gross_sales_net_of_discount,\n    ROUND(SUM(CASE WHEN is_return = 1 THEN net_amount ELSE 0 END), 2)\n        AS returns_value,\n    ROUND(SUM(net_amount), 2)\n        AS net_revenue,\n    -- This MUST equal 0.00 (to the cent). If it does not, the pipeline has an\n    -- arithmetic bug somewhere between cleaning and loading.\n    ROUND(\n        SUM(CASE WHEN is_return = 0 THEN net_amount ELSE 0 END)\n        + SUM(CASE WHEN is_return = 1 THEN net_amount ELSE 0 END)\n        - SUM(net_amount),\n        2\n    ) AS reconciliation_delta\nFROM fact_sales;",
+      "title": "Revenue reconciliation: gross → discount → returns → net",
+      "description": "The tie-out that makes the TX-03 finding auditable. Two independent deltas, both of which can be non-zero — a control that cannot fail proves nothing.",
+      "definition_note": "Proof-of-work for TX-03. Ties gross list value (qty × unit_price) through discounts and returns to net revenue: gross_list_value − discount_total = gross_sales_net_of_discount, and + returns_value = net_revenue. If the 20 silent discounts had been recomputed away, discount_total would read $0.00 and this metric is the only place that absence would be visible. TWO DELTAS, AND WHY BOTH ARE PUBLISHED: line_level_delta is SUM(extended_amount − discount_amount − net_amount) over non-return rows, taken from the raw column values, so it fires as soon as any single row's money columns stop agreeing with one another; aggregate_delta is (gross_list_value − discount_total) + returns_value − net_revenue computed from the ROUNDED figures printed above it, so the published table checks itself, rounding included. They are derived by different routes and agree on well-formed data, which means a disagreement between them localises the fault to serialisation rather than to the data. Both are $0.00 here because the arithmetic holds, not because the algebra forbids anything else — the previous single delta subtracted a partition of a sum from that same sum and was therefore identically zero for all possible data, including data with $79,000 of invented revenue in it. SCOPE, STATED HONESTLY: neither delta can detect a uniform rescaling of all money columns together, because such a change stays internally consistent. That case is caught outside this query by loader.verify_warehouse() check 4, which ties SUM(fact_sales.net_amount) back to SUM(total_amount) in the cleaned CSV at half-a-cent tolerance and aborts the load on failure.",
+      "sql": "-- Q6 (bonus): Revenue reconciliation — ties gross, discount, returns and net.\n-- This is the TX-03 proof: if discounts were recomputed away, discount_total = 0.\n--\n-- The two delta columns are genuine controls, not tautologies:\n--   line_level_delta  = SUM(extended - discount - net) over non-return rows,\n--                       from the UNROUNDED column values. Non-zero the moment any\n--                       row's three money columns stop agreeing with each other.\n--   aggregate_delta   = (gross_list_value - discount_total) + returns_value\n--                       - net_revenue, computed from the ROUNDED figures printed\n--                       above it, so the published table checks itself.\n-- Neither can detect a uniform rescaling of all money columns at once; that is\n-- what loader.verify_warehouse() check 4 is for. See the F7 note in queries.py.\nSELECT\n    ROUND(SUM(CASE WHEN is_return = 0 THEN extended_amount ELSE 0 END), 2)\n        AS gross_list_value,\n    ROUND(SUM(CASE WHEN is_return = 0 THEN discount_amount ELSE 0 END), 2)\n        AS discount_total,\n    -- Derived from its own components (extended - discount), NOT read back from\n    -- net_amount. That substitution is what makes aggregate_delta below a real\n    -- comparison instead of a restatement of the same SUM.\n    ROUND(SUM(CASE WHEN is_return = 0 THEN extended_amount - discount_amount ELSE 0 END), 2)\n        AS gross_sales_net_of_discount,\n    ROUND(SUM(CASE WHEN is_return = 1 THEN net_amount ELSE 0 END), 2)\n        AS returns_value,\n    ROUND(SUM(net_amount), 2)\n        AS net_revenue,\n    -- F15: ``+ 0.0`` after ROUND. A delta of exactly zero reached from below\n    -- rounds to IEEE-754 negative zero, which serialises to JSON as -0.0 and\n    -- renders in a table as \"-0\" — a reviewer reasonably reads that as a real\n    -- (if tiny) discrepancy. Adding +0.0 maps -0.0 to 0.0 and leaves every other\n    -- value bit-identical.\n    ROUND(\n        SUM(CASE WHEN is_return = 0\n                 THEN extended_amount - discount_amount - net_amount\n                 ELSE 0 END),\n        2\n    ) + 0.0 AS line_level_delta,\n    -- Deliberately built from the ROUNDED components, not from the raw sums: that\n    -- is what makes this a check on the table a reviewer is actually reading. If\n    -- the four figures above it do not add up as printed, this column says so.\n    ROUND(\n        ROUND(SUM(CASE WHEN is_return = 0 THEN extended_amount  ELSE 0 END), 2)\n        - ROUND(SUM(CASE WHEN is_return = 0 THEN discount_amount ELSE 0 END), 2)\n        + ROUND(SUM(CASE WHEN is_return = 1 THEN net_amount      ELSE 0 END), 2)\n        - ROUND(SUM(net_amount), 2),\n        2\n    ) + 0.0 AS aggregate_delta\nFROM fact_sales;",
       "sql_ref": "src/analytics/queries.py:REVENUE_RECONCILIATION",
+      "column_units": {
+        "gross_list_value": "currency",
+        "discount_total": "currency",
+        "gross_sales_net_of_discount": "currency",
+        "returns_value": "currency",
+        "net_revenue": "currency",
+        "line_level_delta": "currency",
+        "aggregate_delta": "currency"
+      },
       "row_count": 1,
       "rows": [
         {
@@ -525,7 +596,8 @@
           "gross_sales_net_of_discount": 167996.32,
           "returns_value": -9952.03,
           "net_revenue": 158044.29,
-          "reconciliation_delta": 0.0
+          "line_level_delta": 0.0,
+          "aggregate_delta": 0.0
         }
       ]
     }

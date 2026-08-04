@@ -10,14 +10,21 @@
  *      which file it rendered from, so nobody mistakes mock numbers for real
  *      ones.
  *
- * Because `output: "export"` pre-renders everything at build time, this runs
- * once during `next build` and the parsed result is serialised into the HTML.
- * The browser performs zero data fetches.
+ * The page is a `force-static` Server Component, so this runs once during
+ * `next build` and the parsed result is serialised into the HTML. The browser
+ * performs zero data fetches to render the dashboard.
+ *
+ * It is ALSO called at request time by `/api/chat`, which needs the bundle to
+ * ground the assistant's answers. That is the reason `next.config.ts` carries
+ * an `outputFileTracingIncludes` entry for `public/data/*.json`: Next's tracer
+ * cannot see through a runtime `readFileSync`, so the file has to be declared
+ * or the serverless function ships without it.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 
+import { codeRefsFor } from "./grounding";
 import type { Bundle, DefectView } from "./types";
 
 export interface LoadedBundle {
@@ -93,7 +100,15 @@ export function buildDefectViews(bundle: Bundle): DefectView[] {
       audit,
       detected_count: detected,
       coverage,
-      refs: bundle.code_index[spec.code] ?? [],
+      // `codeRefsFor` normalises the tag sites. The pipeline serialises them as
+      // `{ file, line, snippet }` while `types.ts` — and `CodeViewer`, which
+      // keys its file tabs off `ref.path` — expect `{ path, … }`. Reading the
+      // raw array straight out of `code_index` therefore yields refs whose
+      // `path` is `undefined`, and the code viewer falls through to its
+      // "source_files does not carry it" empty state for every defect. One
+      // normalisation, used by the UI and by the assistant's prompt builder
+      // alike, so the two can never disagree about where a defect lives.
+      refs: codeRefsFor(bundle, spec.code),
     };
   });
 }

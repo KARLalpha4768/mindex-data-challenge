@@ -19,6 +19,7 @@ to the exact tagged line of Python that handles it.
 | **Lineage** | Raw CSV → profile → clean → star schema → analytics. Every stage lists the defect codes it owns; selecting one opens the Defect Explorer pre-filtered to those codes. |
 | **Schema** | The star schema with the grain stated in words on every table, PK/FK/NK badges, and column-level notes linking back to the defect each column exists to expose. |
 | **Analytics** | One card per metric: the explicit numerator/denominator, the raw SQL in a collapsible highlighted block, the result rows, plus a MoM revenue chart and a return-rate chart with the 10% alert threshold drawn as a reference line. |
+| **Assistant** | A grounded Q&A panel. Retrieves the relevant slice of the bundle for your question and answers from that alone, citing `file:line`. Falls back to scripted, bundle-derived answers when no model is configured — and says which one you are reading. See [The assistant](#the-assistant). |
 
 ---
 
@@ -30,25 +31,29 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-Production build (static export into `out/`):
+Production build and run:
 
 ```bash
 npm run build
-npx serve out        # or: npm start
+npm start            # next start, http://localhost:3000
 ```
 
-Type-check without building:
+Type-check, and run the assistant's test suite:
 
 ```bash
 npm run typecheck
+npm test             # context selector + route handler, mocked upstream, no network
 ```
+
+> **This is no longer a static export.** It was, until the assistant became real. The
+> chat route holds an API key and a static site has nowhere to put one. Every *page* is
+> still pre-rendered at build time — `next build` reports `/` as `○ (Static)` and only
+> `/api/chat` as `ƒ (Dynamic)` — so the dashboard itself still performs zero data fetches
+> in the browser. The full reasoning is in the header comment of `next.config.ts`.
 
 ---
 
 ## Deploy to Vercel
-
-The app is a pure static export (`output: "export"` in `next.config.ts`). No server, no API
-routes, no environment variables, no runtime data fetching.
 
 ```bash
 npm i -g vercel      # once
@@ -58,11 +63,42 @@ vercel link          # once, to associate the project
 vercel deploy --prod
 ```
 
-`vercel.json` pins `outputDirectory: "out"` and the build/install commands, so a
-Git-connected import works with zero dashboard configuration — set the project **Root
-Directory** to `dashboard` and nothing else.
+Set the project **Root Directory** to `dashboard`. `vercel.json` pins the framework and
+the build/install commands and nothing else.
 
-Any static host works equally well: `out/` is plain HTML, CSS and JS.
+> **`outputDirectory` was removed from `vercel.json`, deliberately.** It used to say
+> `"out"`, which was correct for a static export and is now actively wrong: there is no
+> `out/` directory any more. Vercel's Next.js preset knows where a Next build puts its
+> output and needs no help. A stale `outputDirectory` is what produced the
+> `404: NOT_FOUND` on the previous deploy — Vercel looked for a folder the build never
+> created and served nothing. If you see that 404 again, check this first.
+
+### Setting `GEMINI_API_KEY` on Vercel
+
+1. Vercel dashboard → your project → **Settings** → **Environment Variables**.
+2. **Key**: `GEMINI_API_KEY`. **Value**: the key from
+   [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+3. Tick the environments it applies to — **Production**, and Preview/Development if you
+   want the assistant live there too.
+4. Leave "Sensitive" on if offered; the value is never needed at build time, only at
+   request time.
+5. **Save**, then **redeploy** (Deployments → ⋯ → Redeploy). Environment variables are
+   injected at deploy time; an existing deployment will not pick up a new one.
+
+Do **not** name it `NEXT_PUBLIC_GEMINI_API_KEY`. Next.js inlines every `NEXT_PUBLIC_*`
+variable into the JavaScript it sends to the browser, so on a public URL that is
+publication, not configuration.
+
+Locally, put it in `dashboard/.env.local` (gitignored; see `.env.example`):
+
+```bash
+echo 'GEMINI_API_KEY=your-key-here' >> dashboard/.env.local
+```
+
+**Without a key nothing breaks.** `GET /api/chat` reports `configured: false`, the panel
+opens in offline mode, and every answer comes from the scripted set assembled out of
+`bundle.json` — clearly labelled as scripted. Deploying with no key is a supported
+configuration, not a degraded one.
 
 ---
 
@@ -70,14 +106,17 @@ Any static host works equally well: `out/` is plain HTML, CSS and JS.
 
 Everything the dashboard renders comes from **one JSON file**, read from disk at *build*
 time by a Server Component (`src/lib/bundle.ts`) and serialised into the pre-rendered HTML.
-The browser performs **zero** data fetches — there is no loading state anywhere in the app
-because there is nothing to load.
+The browser performs **zero** data fetches to render any view — there is no loading state
+anywhere in the dashboard because there is nothing to load. (The assistant panel is the one
+exception, and only when you ask it something: it posts to `/api/chat`, which reads the
+same file server-side to ground its answer.)
 
 Resolution order:
 
-1. `public/data/bundle.json` — the real pipeline artefact. **Gitignored**, so a clean
-   checkout never carries stale run output.
+1. `public/data/bundle.json` — the real pipeline artefact.
 2. `public/data/bundle.mock.json` — the committed stand-in. Same shape exactly.
+
+Both are committed, so a clean checkout builds without running the pipeline first.
 
 When the mock is used, a warning banner is rendered across the top of the app. A reviewer
 can never mistake stand-in data for real pipeline output.
@@ -115,6 +154,111 @@ Hand-authored parts, stated plainly:
 Verified figures currently in the mock: 505 raw transaction rows → 474 loaded; 16 → 15
 stores; 32 → 30 products; **$961.48** of silent discount (TX-03) preserved rather than
 recomputed away; all 17 defect classes reconciling detected-vs-expected.
+
+---
+
+## The assistant
+
+A grounded question-answering panel over the pipeline's own output. It replaces an earlier
+"AI assistant" that contained no AI — it substring-matched a hand-written answer list — and
+whose hand-written figures had gone stale (it quoted `$170,816.34` for a number that is
+`$168,957.80`). Both problems are fixed structurally rather than by editing the strings.
+
+### Two modes, always labelled
+
+| Mode | When | What produces the text |
+|---|---|---|
+| **Live** | `GEMINI_API_KEY` is set and the server can read the bundle | `gemini-3.6-flash`, answering from a retrieved slice of the bundle |
+| **Offline** | no key, the API call fails, or you clicked a preset chip | Scripted answers assembled from `bundle.json` at render time |
+
+Every assistant message carries a source badge, and offline answers say
+*"offline mode — scripted answer"* with the reason in parentheses. There is no state in
+which a reviewer cannot tell which mode produced what they are reading. That matters more
+here than in most apps: the submission's whole claim is numerical trustworthiness, so an
+unlabelled machine-written dollar figure would undermine the thing it is describing.
+
+### How grounding works
+
+The bundle is ~1.02 MB. It does not fit in a prompt and would not help there if it did.
+`src/lib/grounding.ts` turns a question into a compact context:
+
+1. **An always-on preamble** — row counts, warehouse counts, 17/17 coverage, and the full
+   revenue reconciliation, on *every* request regardless of the question. Models invent
+   numbers when they need one and do not have it; this ensures they always have it.
+2. **Defect dossiers** — any code named in the question (`TX-03`) gets its full
+   detection / decision / rationale plus its audit record. Others are scored by term
+   overlap against the catalog text and included in summary form.
+3. **Metric blocks** — definition note (the explicit numerator/denominator), declared
+   column units, the SQL, and the result rows, row-capped and labelled as partial.
+4. **Source windows** — real lines sliced out of `source_files` around each
+   `# DEFECT: <CODE>` tag site, with line numbers, so `file:line` citations are checkable.
+
+Retrieval is term-overlap with field weighting, not embeddings. The corpus is 25 documents
+whose text already contains the reviewer's vocabulary almost verbatim; a vector index would
+add a build step and a threshold to tune in exchange for nothing measurable at this scale.
+It is deterministic, which is also what makes it testable offline.
+
+**The context budget is 9,000 tokens** (~36 KB, ~3.5% of the bundle) — see
+`DEFAULT_CONTEXT_TOKEN_BUDGET` in `src/lib/grounding.ts`, where the choice is argued in
+full. It is not a model limit; it is a cost, latency and precision budget. Blocks are
+filled greedily in priority order and anything that does not fit is *named in the prompt*,
+so the model can say "I would need the aov_by_region rows" instead of guessing.
+
+The system instruction is a hard extraction contract: answer only from the context, never
+state a number that is not in it, say so plainly when the answer is not there, cite
+`file:line`. What the server retrieved is shown in the UI under "Grounding context used" —
+retrieval you cannot inspect is indistinguishable from retrieval that did not happen.
+
+### The API key
+
+`GEMINI_API_KEY` is read from `process.env` in `src/lib/chatHandler.ts`, which only the
+server-side `/api/chat` route imports. It is:
+
+* never prefixed `NEXT_PUBLIC_`, so Next cannot inline it into a client bundle;
+* never put in a URL — the Gemini REST API also accepts `?key=`, but the header
+  `x-goog-api-key` keeps the secret out of redirect chains, proxy logs and error messages
+  that echo the request URL;
+* never in a response body — upstream failures are reduced to a status code and a fixed
+  phrase, and a redaction pass runs over anything else that reaches the client;
+* verified absent from the build: with the key set, a production build contains the value
+  nowhere under `.next/` at all. The only thing the browser learns is the boolean from
+  `GET /api/chat`.
+
+### Cost and abuse controls, and their limits
+
+This is a public URL spending someone's personal API quota. The route bounds every factor
+of the bill: a **24 KB request body cap**, a **1,200-character question cap**, a
+**6-turn conversation cap** (history is replayed every request, so its cost compounds), the
+**9,000-token context budget**, a **1,400-token output cap**, a **25-second upstream
+timeout**, and a **per-IP rate limit of 20 requests per 5 minutes**.
+
+Stated honestly, because a control you have misjudged is worse than one you know is
+partial: **the rate limiter is in-memory and therefore per-instance.** Vercel runs the
+route as a serverless function and may run many concurrently, each with its own empty
+counter; cold starts reset it; and the key is an IP from `x-forwarded-for`, which is shared
+by NAT and rotatable by VPN. It stops one bored visitor holding down Enter. It is *not* a
+quota guard. A real one needs a shared store (Vercel KV, Upstash), and the actual backstop
+is a spend cap on the Google Cloud project that issued the key — set one. The reasoning for
+accepting that trade-off is in `src/lib/rateLimit.ts`.
+
+### Tests
+
+```bash
+npm test
+```
+
+70 assertions covering the context selector (determinism, budget enforcement, that it
+quotes live figures and that none of the three stale figures can reappear), the scripted
+answers, and the route handler against a **mocked** upstream: success, upstream non-2xx,
+network failure, safety block, empty candidate, missing key, oversized body, malformed
+JSON, history cap and the rate limiter. Two of those assertions specifically check that a
+key never escapes — one feeds an upstream error body containing the key, one throws a
+network error containing it.
+
+**No test calls Gemini.** The build sandbox has no route to the API, and a test that faked
+a successful call would be exactly the dishonesty this project argues against. The one
+thing only a live deployment can confirm is that the real endpoint accepts this exact
+request shape.
 
 ---
 
@@ -173,16 +317,23 @@ export const REPO_SOURCE_PREFIX = "solution";
 export const RETURN_RATE_ALERT_THRESHOLD = 0.1;
 ```
 
-Deliberately constants rather than environment variables: with `output: "export"` there is
-no server to read env at runtime, and a reviewer should be able to see the configuration by
-reading one short file.
+Deliberately constants rather than environment variables: a reviewer should be able to see
+the configuration by reading one short file, and none of it is secret — these values are
+compiled into the client bundle and are public by construction.
+
+The project's one genuine secret, `GEMINI_API_KEY`, is therefore **not** in `config.ts`.
+The rule that separates them: if it may appear in the browser's view-source it belongs in
+`config.ts`; if it may not, it must never be imported by a `"use client"` module.
 
 ---
 
 ## Design decisions worth knowing
 
-**Static export, not SSR.** A review artefact should have zero operational surface. `next
-build` emits `out/`; it deploys anywhere and cannot break at runtime.
+**Pre-rendered pages, one dynamic route.** A review artefact should have as close to zero
+operational surface as its features allow. Every page is still generated at build time from
+the bundle on disk; the only thing that runs per request is `/api/chat`, which exists
+because it holds a secret. If the assistant were removed, `output: "export"` could go
+straight back into `next.config.ts` and nothing else would change.
 
 **Hash routing, one route.** Six views addressed by URL hash (`#defects/TX-03`,
 `#defects/codes:TX-01,TX-02`), so every view and every individual defect is linkable and
@@ -217,16 +368,21 @@ its table and detail panel below 1280px.
 
 ```
 dashboard/
-├── next.config.ts              # output: "export"
+├── next.config.ts              # why this is no longer a static export
 ├── tailwind.config.ts          # palette: one accent + four severity colours
-├── vercel.json
+├── vercel.json                 # framework + commands only; NO outputDirectory
+├── .env.example                # GEMINI_API_KEY placeholder, no values
 ├── public/data/
 │   ├── bundle.mock.json        # committed stand-in (generated, see above)
-│   └── bundle.json             # real pipeline output (gitignored)
+│   └── bundle.json             # real pipeline output
 ├── scripts/
 │   └── generate_mock_bundle.py # rebuilds the mock from data/raw/*.csv
+├── tests/
+│   ├── chat.test.ts            # selector + handler, mocked upstream, no network
+│   └── tsconfig.json           # emits CommonJS to .test-build/ for plain node
 └── src/
-    ├── app/                    # layout, single route, globals.css
+    ├── app/                    # layout, the page, globals.css
+    │   └── api/chat/route.ts   # the only server route: thin adapter over chatHandler
     ├── components/
     │   ├── Dashboard.tsx       # shell + hash router
     │   ├── Overview.tsx
@@ -239,14 +395,20 @@ dashboard/
     │   ├── Analytics.tsx
     │   ├── MetricCharts.tsx    # recharts: MoM + return rate w/ threshold
     │   ├── SqlBlock.tsx
+    │   ├── ChatAssistant.tsx   # the assistant panel; live + offline, always labelled
     │   └── ui.tsx              # shared primitives
     └── lib/
         ├── types.ts            # THE bundle contract
-        ├── bundle.ts           # build-time loader + catalog×audit join
-        ├── config.ts           # every tunable constant
+        ├── bundle.ts           # loader + catalog×audit join
+        ├── config.ts           # every tunable public constant
         ├── format.ts           # null-safe formatters
         ├── schema.ts           # star schema model (hand-authored)
-        └── lineage.ts          # pipeline stage graph (hand-authored)
+        ├── lineage.ts          # pipeline stage graph (hand-authored)
+        ├── grounding.ts        # retrieval: run facts, scoring, context budget, prompt
+        ├── presets.ts          # scripted answers, derived from the bundle at render time
+        ├── chatContract.ts     # client↔server wire types (safe for the browser)
+        ├── chatHandler.ts      # SERVER ONLY: validation, limits, upstream call
+        └── rateLimit.ts        # per-IP limiter, and an honest note on what it misses
 ```
 
 `schema.ts` and `lineage.ts` are hardcoded on purpose: they are architecture, not pipeline

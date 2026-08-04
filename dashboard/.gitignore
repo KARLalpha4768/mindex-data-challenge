@@ -6,7 +6,13 @@ next-env.d.ts
 .DS_Store
 .vercel
 
-# Both bundle.json and bundle.mock.json are committed for Vercel static build.
+# Both bundle.json and bundle.mock.json are committed so a clean checkout builds.
 
-.vercel
+# Compiled test output (npm test emits here, then runs it with plain node).
+.test-build/
+
+# Secrets. GEMINI_API_KEY lives in .env.local locally and in Vercel's project
+# environment variables in deployment; neither is ever committed.
 .env*
+# ...except the placeholder, which documents the variable names and holds no values.
+!.env.example
