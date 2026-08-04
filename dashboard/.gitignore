@@ -7,3 +7,5 @@ next-env.d.ts
 .vercel
 
 # Both bundle.json and bundle.mock.json are committed for Vercel static build.
+
+.vercel
