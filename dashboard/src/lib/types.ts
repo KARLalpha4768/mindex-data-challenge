@@ -116,8 +116,28 @@ export interface Metric {
   definition_note?: string;
   /** The literal SQL executed. */
   sql?: string;
+  /**
+   * Per-column unit declared by the SQL author in
+   * `src/analytics/queries.py:METRIC_REGISTRY`.
+   *
+   * This is the ONLY sanctioned source of scale information. The UI must never
+   * infer whether a number is a 0-1 ratio or a 0-100 percentage from its
+   * magnitude — that guess renders a correct 12.5 as "1250.00%" and a correct
+   * 1.5x growth as "1.50%". Absent for bundles generated before units existed,
+   * in which case the formatter falls back to a documented naming convention.
+   */
+  column_units?: Record<string, ColumnUnit>;
   rows: MetricRow[];
 }
+
+/** Mirrors the vocabulary in `src/analytics/queries.py`. */
+export type ColumnUnit =
+  | "percent"
+  | "ratio"
+  | "currency"
+  | "integer"
+  | "flag"
+  | "text";
 
 /** One `# DEFECT: <CODE>` tag site found in the pipeline source. */
 export interface CodeRef {

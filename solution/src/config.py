@@ -102,6 +102,34 @@ from customer leaderboards while still counting their money everywhere else."""
 ZIP_CODE_LENGTH: int = 5
 """Expected US ZIP width (ST-01). Named so the padding logic reads as intent."""
 
+# ── F16 · quarantine disposition vocabulary ───────────────────────────────────
+# WHY this exists: ``output/quarantine/`` held two different kinds of row under
+# one name. Some rows were removed from the output (the duplicate P012, the
+# losing S007 and P005 variants); others were *snapshots of rows that survive*,
+# filed there so a data steward can review a decision (S003's padded ZIP, P027's
+# imputed price, the P005 row that won). A reader summing the products quarantine
+# CSVs therefore computed 32 - 4 = 28 and could not reconcile it against
+# dim_product's 30 rows -- the arithmetic looked wrong when it was the labelling
+# that was missing.
+# DECISION: every quarantine CSV carries a ``disposition`` column drawn from this
+# closed two-value vocabulary. Sum the ``dropped`` rows and the row budget
+# reconciles exactly; the ``evidence`` rows are review items that changed nothing
+# about the row count. ``transactions__lineage.csv`` already worked this way and
+# is the pattern being generalised here.
+# WHY a shared constant rather than string literals at each call site: the two
+# cleaning modules must spell these identically or a reader filtering the CSVs
+# gets a partial answer, and a typo in a literal is invisible until then.
+DISPOSITION_DROPPED: str = "dropped"
+"""The row is NOT in the cleaned output. It counts against the row budget."""
+
+DISPOSITION_EVIDENCE: str = "evidence"
+"""The row (or its business key) SURVIVES into the cleaned output; this copy is a
+review snapshot of a decision that was made about it. It does not count against
+the row budget."""
+
+VALID_DISPOSITIONS: frozenset[str] = frozenset({DISPOSITION_DROPPED, DISPOSITION_EVIDENCE})
+"""Closed vocabulary, so a third spelling cannot appear without a decision."""
+
 MAX_AFFECTED_KEYS_SERIALIZED: int = 50
 """Cap on business keys embedded per defect record in audit_report.json.
 WHY: TX-06 alone has 40 keys and TX-10 has 30; an uncapped list would make the
@@ -205,6 +233,8 @@ __all__ = [
     "DB_PATH",
     "DEFAULT_RUN_CONFIG",
     "DEFECT_CATALOG_JSON_PATH",
+    "DISPOSITION_DROPPED",
+    "DISPOSITION_EVIDENCE",
     "GUEST_CUSTOMER_ID",
     "MAX_AFFECTED_KEYS_SERIALIZED",
     "OUTPUT_DIR",
@@ -218,5 +248,6 @@ __all__ = [
     "RunConfig",
     "SCHEMA_SQL_PATH",
     "SRC_DIR",
+    "VALID_DISPOSITIONS",
     "ZIP_CODE_LENGTH",
 ]

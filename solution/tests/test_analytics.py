@@ -6,10 +6,24 @@ the SQL in queries.py answers the right question correctly — not just that
 the queries execute without error.
 
 Coverage:
-  - Return rate calculation: a store with 1 return out of 3 transactions → 33.33%
+  - Return rate calculation: a store with 1 return out of 4 transactions
   - Net revenue calculation: sales + returns = correct net
   - Top customers: GUEST excluded from lifetime leaderboard
-  - Revenue reconciliation: discount amounts tie out
+  - Revenue reconciliation: gross, discount, returns and net tie out
+
+Deliberately NOT covered here:
+  - The reconciliation *deltas*' ability to fail  -> ``test_metric_contracts.py``
+  - The trailing-window boundary                  -> ``test_metric_contracts.py``
+  - Any real-data value                           -> ``test_golden_end_to_end.py``
+
+WHY SQL IS RESOLVED THROUGH ``METRIC_REGISTRY`` (finding F11)
+-------------------------------------------------------------
+This module used to import the query constants by their Python names. The
+*metric id* is the binding interface — contract §6 names all six, they key
+``analytics.json``, and the dashboard reads them — while the Python constant
+name is an implementation detail. Looking queries up by id means a rename of
+the id cannot pass unnoticed, and an internal constant rename does not churn
+the suite.
 """
 
 from __future__ import annotations
@@ -19,14 +33,9 @@ from pathlib import Path
 
 import pytest
 
-from src.analytics.queries import (
-    RETURN_RATE_BY_STORE,
-    TOP_CUSTOMERS_LIFETIME,
-    TOP_STORES_RECENT_30D,
-    REVENUE_RECONCILIATION,
-    AVG_TXN_VALUE_BY_REGION,
-)
-from src.config import AS_OF_DATE, RETURN_RATE_ALERT_THRESHOLD
+from src.config import AS_OF_DATE, RETURN_RATE_ALERT_THRESHOLD, RunConfig
+
+from .conftest import metric_sql
 
 
 def _build_test_warehouse(db_path: Path) -> None:
@@ -165,7 +174,7 @@ class TestReturnRate:
         conn.row_factory = sqlite3.Row
         params = {"return_rate_threshold": RETURN_RATE_ALERT_THRESHOLD}
 
-        rows = [dict(r) for r in conn.execute(RETURN_RATE_BY_STORE, params).fetchall()]
+        rows = [dict(r) for r in conn.execute(metric_sql("return_rate_by_store"), params).fetchall()]
         conn.close()
 
         assert len(rows) == 1, "Should have exactly 1 store"
@@ -190,59 +199,84 @@ class TestNetRevenue:
     """Verify net revenue includes returns as subtractions."""
 
     def test_net_revenue_with_returns(self, test_warehouse: Path) -> None:
-        """Net revenue = 200 + 270 + (-100) + 100 = 470.00."""
+        """Net revenue = 200 + 270 + (-100) + 100 = 470.00.
+
+        STRENGTHENED: the window parameters now come from ``RunConfig`` rather
+        than the hand-written literal ``"2026-05-03"`` this test used to pass.
+        That literal was one day wider than the real window and, because all
+        four fixture dates sit comfortably inside either reading, the test was
+        silently exercising a window the pipeline never uses. The boundary
+        itself is tested behaviourally in ``test_metric_contracts.py``.
+        """
         conn = sqlite3.connect(str(test_warehouse))
         conn.row_factory = sqlite3.Row
+        cfg = RunConfig(as_of_date=AS_OF_DATE)
         params = {
-            "as_of_date": "2026-06-02",
-            "window_start": "2026-05-03",  # 30-day window covers all test dates
+            "as_of_date": cfg.as_of_date.isoformat(),
+            "window_start": cfg.recent_window_start.isoformat(),
         }
+        assert params == {"as_of_date": "2026-06-02", "window_start": "2026-05-04"}
 
-        rows = [dict(r) for r in conn.execute(TOP_STORES_RECENT_30D, params).fetchall()]
+        rows = [
+            dict(r)
+            for r in conn.execute(metric_sql("top_stores_recent_30d"), params).fetchall()
+        ]
         conn.close()
 
         assert len(rows) == 1
         assert rows[0]["net_revenue"] == 470.0
         assert rows[0]["transaction_count"] == 4
-        assert rows[0]["return_count"] == 1
+        assert rows[0]["return_count"] == 1, "returns are netted, not filtered out"
 
 
 class TestTopCustomersExcludesGuest:
     """Verify GUEST is excluded from lifetime spend leaderboard."""
 
     def test_guest_excluded(self, test_warehouse: Path) -> None:
-        """GUEST has 1 transaction ($100) but should not appear in top customers.
-        Only CUST001 should appear."""
+        """GUEST has 1 transaction ($100) but must not appear in top customers.
+
+        STRENGTHENED: also pins that the leaderboard has exactly one row and
+        that GUEST's $100 is not silently folded into CUST001's total. Excluding
+        the *name* while including the *money* would pass the original
+        assertions and is the more plausible bug of the two.
+        """
         conn = sqlite3.connect(str(test_warehouse))
         conn.row_factory = sqlite3.Row
 
-        rows = [dict(r) for r in conn.execute(TOP_CUSTOMERS_LIFETIME, {}).fetchall()]
+        rows = [dict(r) for r in conn.execute(metric_sql("top_customers_lifetime"), {}).fetchall()]
         conn.close()
 
         customer_ids = [r["customer_id"] for r in rows]
-        assert "GUEST" not in customer_ids, "GUEST must be excluded from lifetime leaderboard"
-        assert "CUST001" in customer_ids
+        assert customer_ids == ["CUST001"], "GUEST must be excluded from the leaderboard entirely"
 
-        cust001 = [r for r in rows if r["customer_id"] == "CUST001"][0]
-        # CUST001 has 3 transactions: 200 + 270 + (-100) = 370
+        cust001 = rows[0]
+        # CUST001 has 3 transactions: 200 + 270 + (-100) = 370. GUEST's 100 is
+        # not part of it, so 470 here would mean the exclusion is cosmetic.
         assert cust001["lifetime_spend"] == 370.0
         assert cust001["transaction_count"] == 3
+        assert cust001["avg_order_value"] == pytest.approx(370.0 / 3, abs=0.005)
 
 
 class TestRevenueReconciliation:
     """Verify the revenue reconciliation ties out exactly."""
 
     def test_reconciliation_ties_out(self, test_warehouse: Path) -> None:
-        """Gross list value of sales = 200 + 300 + 100 = 600.
-        Discount total = 30.
-        Net sales = 200 + 270 + 100 = 570.
-        Returns = -100.
-        Net revenue = 570 + (-100) = 470.
-        Reconciliation delta must be 0.00."""
+        """Gross 600 − discount 30 = 570; + returns (−100) = net 470.
+
+        UPDATED (F7 / mutation M6): the single ``reconciliation_delta`` this
+        test used to assert was ``SUM(net WHERE ret=0) + SUM(net WHERE ret=1)
+        − SUM(net)`` — identically zero for any data, because ``is_return``
+        partitions the rows. Asserting it equalled 0.00 proved nothing, and the
+        assertion survived replacing the whole expression with the literal
+        ``0.0``. The two replacement deltas are asserted here on *good* data and,
+        crucially, on *bad* data in
+        ``test_metric_contracts.py::TestReconciliationDeltaIsFalsifiable`` —
+        only the second direction shows they can fail.
+        """
         conn = sqlite3.connect(str(test_warehouse))
         conn.row_factory = sqlite3.Row
 
-        rows = [dict(r) for r in conn.execute(REVENUE_RECONCILIATION, {}).fetchall()]
+        rows = [dict(r) for r in conn.execute(metric_sql("revenue_reconciliation"), {}).fetchall()]
         conn.close()
 
         assert len(rows) == 1
@@ -253,8 +287,16 @@ class TestRevenueReconciliation:
         assert recon["gross_sales_net_of_discount"] == 570.0
         assert recon["returns_value"] == -100.0
         assert recon["net_revenue"] == 470.0
-        assert recon["reconciliation_delta"] == 0.0, (
-            "Reconciliation must tie: gross - discount + returns = net"
+
+        assert recon["line_level_delta"] == 0.0, (
+            "every non-return row must satisfy net == extended - discount"
+        )
+        assert recon["aggregate_delta"] == 0.0, (
+            "the printed figures must add up: (gross - discount) + returns = net"
+        )
+        assert "reconciliation_delta" not in recon, (
+            "the tautological single delta is replaced by line_level_delta and "
+            "aggregate_delta (FIX_CONTRACT §2)"
         )
 
 
@@ -267,7 +309,7 @@ class TestAvgTxnValueByRegion:
         conn = sqlite3.connect(str(test_warehouse))
         conn.row_factory = sqlite3.Row
 
-        rows = [dict(r) for r in conn.execute(AVG_TXN_VALUE_BY_REGION, {}).fetchall()]
+        rows = [dict(r) for r in conn.execute(metric_sql("aov_by_region"), {}).fetchall()]
         conn.close()
 
         assert len(rows) == 1
@@ -275,3 +317,8 @@ class TestAvgTxnValueByRegion:
         assert rows[0]["transaction_count"] == 3  # excludes the 1 return
         assert rows[0]["total_revenue"] == 570.0
         assert abs(rows[0]["avg_transaction_value"] - 190.0) < 0.01
+
+        # Including the −100 return would give 4 txns / 470 / 117.50. Pinning all
+        # three numbers means a change to the exclusion cannot pass by moving the
+        # error into a column this test does not read (mutation M8).
+        assert rows[0]["total_revenue"] != 470.0

@@ -79,44 +79,92 @@ export function formatTimestamp(iso: string | null | undefined): string {
 }
 
 /**
- * Best-effort cell rendering for the heterogeneous analytics tables.
- *
- * Column semantics are inferred from the column NAME because the bundle carries
- * no per-column type metadata. This is a presentation-layer convenience only —
- * it never alters the underlying value.
+ * The unit vocabulary declared by `src/analytics/queries.py`. Kept as a string
+ * union rather than an enum so it survives JSON round-tripping unchanged.
  */
-export function formatMetricCell(column: string, value: unknown): string {
+export type ColumnUnit =
+  | "percent" // already scaled 0-100: 12.5 -> "12.50%"
+  | "ratio" //   unscaled 0-1:       0.125 -> "12.50%"
+  | "currency"
+  | "integer"
+  | "flag"
+  | "text";
+
+/**
+ * Cell rendering for the analytics tables.
+ *
+ * SCALE IS NEVER INFERRED FROM MAGNITUDE. The previous implementation decided
+ * that `Math.abs(value) > 1` meant "already a percentage", which is wrong in
+ * both directions: a real +150% month-over-month growth arrives as 1.5 in ratio
+ * form and would have rendered "1.50%", while a real 0.4% return rate in
+ * percentage form would have rendered "40.00%". It also silently produced
+ * "1250.00%" for a correct 12.5 whenever the caller had already scaled.
+ *
+ * The producer declares the unit. `metric.column_units[column]` comes straight
+ * from the SQL author in `queries.py`. When a unit is declared we obey it and
+ * do no arithmetic beyond what the unit says.
+ *
+ * The name-based fallback below applies only to bundles produced before units
+ * existed. It is deliberately conservative and follows one stated convention —
+ * `_pct` means 0-100, `_ratio`/`_rate` means 0-1 — so it is predictable rather
+ * than clever. If neither matches, the number is rendered as-is.
+ */
+export function formatMetricCell(
+  column: string,
+  value: unknown,
+  unit?: ColumnUnit,
+): string {
   if (value === null || value === undefined) return EM_DASH;
   if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value !== "number") return String(value);
 
   const name = column.toLowerCase();
-  if (typeof value === "number") {
-    const isPctOrRate =
-      name.includes("pct") ||
-      name.includes("rate") ||
-      name.includes("growth") ||
-      name.includes("change");
+  // Growth and change columns carry a sign that is the whole point of the
+  // number, so they are rendered signed. This is a display choice, not a
+  // scaling one, and is independent of the unit.
+  const signed = name.includes("growth") || name.includes("change");
 
-    if (isPctOrRate) {
-      const isGrowth = name.includes("growth") || name.includes("change");
-      // If value > 1 or < -1 (e.g. 12.5), it is already a 0-100 percentage.
-      // If value is between -1 and 1 (e.g. 0.125), it is a ratio to be scaled.
-      const pctValue = Math.abs(value) > 1.0 ? value : value * 100;
-      if (isGrowth) return formatSignedPct(pctValue, 2);
-      return formatAlreadyPct(pctValue, 2);
+  // ── Declared unit: the trusted path ──────────────────────────────────────
+  if (unit) {
+    switch (unit) {
+      case "percent":
+        return signed ? formatSignedPct(value, 2) : formatAlreadyPct(value, 2);
+      case "ratio":
+        return signed
+          ? formatSignedPct(value * 100, 2)
+          : formatAlreadyPct(value * 100, 2);
+      case "currency":
+        return formatCurrency(value);
+      case "integer":
+        return formatInt(value);
+      case "flag":
+        return value ? "yes" : "no";
+      case "text":
+        return String(value);
     }
-
-    if (
-      name.includes("revenue") ||
-      name.includes("amount") ||
-      name.includes("value") ||
-      name.includes("price")
-    ) {
-      return formatCurrency(value);
-    }
-    return formatInt(value);
   }
-  return String(value);
+
+  // ── Fallback for unit-less legacy bundles ────────────────────────────────
+  // WHY suffix-based and not magnitude-based: a suffix is a decision someone
+  // made; a magnitude is an accident of the data on a given day.
+  if (name.endsWith("_pct")) {
+    return signed ? formatSignedPct(value, 2) : formatAlreadyPct(value, 2);
+  }
+  if (name.endsWith("_ratio") || name.endsWith("_rate") || name.includes("rate_")) {
+    return signed
+      ? formatSignedPct(value * 100, 2)
+      : formatAlreadyPct(value * 100, 2);
+  }
+  if (
+    name.includes("revenue") ||
+    name.includes("amount") ||
+    name.includes("value") ||
+    name.includes("price") ||
+    name.includes("spend")
+  ) {
+    return formatCurrency(value);
+  }
+  return formatInt(value);
 }
 
 /** Column key -> human header. "net_revenue" -> "Net revenue". */

@@ -324,8 +324,19 @@ def stage_clean(
     valid_store_ids: set[str] = set(stores["store_id"].astype(str))
     valid_product_ids: set[str] = set(products["product_id"].astype(str))
 
+    # ── F3 · the lineage artifact must honour --output-dir ───────────────────
+    # WHY this argument is now passed explicitly: ``lineage_dir`` used to default
+    # to the import-time constant ``config.QUARANTINE_DIR``, so
+    # ``--output-dir /tmp/x`` silently did not apply to
+    # ``transactions__lineage.csv`` -- the one artifact that carries the 505-row
+    # budget proof. The parameter is required and keyword-only now, so this call
+    # site cannot regress without a TypeError at import-test time.
     transactions = clean_transactions(
-        raw["transactions"], audit, valid_store_ids, valid_product_ids
+        raw["transactions"],
+        audit,
+        valid_store_ids,
+        valid_product_ids,
+        lineage_dir=cfg.quarantine_dir,
     )
     _line(f"transactions  {len(raw['transactions']):>4} -> {len(transactions):>4} rows")
 
@@ -483,6 +494,119 @@ def stage_report(
     return mismatches
 
 
+# ── F2 · ship the source files the code index points into ────────────────────
+# WHY this helper exists: ``code_index`` is a list of (file, line) references, and
+# the dashboard's code viewer resolves each one against ``bundle.source_files``.
+# The deployed bundle shipped the index without the files, so every one of the 17
+# defects rendered the component's own fallback error string
+# ("code_index references it but source_files does not carry it") -- the
+# headline feature of the dashboard was dead on the live URL while working
+# locally, because the checked-in mock bundle happened to carry four files.
+# DECISION: embed WHOLE files, never fragments. The index's line numbers are
+#   1-based offsets into the complete file; shipping a window would require the
+#   viewer to know the offset, and an off-by-one there points a reviewer at the
+#   wrong line, which is worse than no link at all.
+# WHY .py and .sql only: those are the two languages the index can reference
+#   (``scan_defect_tags`` walks the same two globs), and the bundle is downloaded
+#   by a browser, so shipping anything not needed is paid for on every page load.
+_SOURCE_FILE_PATTERNS: tuple[str, ...] = ("*.py", "*.sql")
+"""File types embedded in the bundle. Kept in step with ``scan_defect_tags``'s
+own patterns -- if the index can point at it, the bundle must carry it."""
+
+_SOURCE_LANGUAGE_BY_SUFFIX: dict[str, str] = {".py": "python", ".sql": "sql"}
+"""Suffix -> syntax-highlighting language id consumed by the dashboard viewer."""
+
+
+def _build_source_files(src_dir: Path) -> dict[str, dict[str, Any]]:
+    """Read every indexable source file into the bundle's ``source_files`` block.
+
+    Args:
+        src_dir: The source tree to walk -- always :data:`src.config.SRC_DIR`, so
+            that the keys produced here use the same anchor
+            (``src_dir.parent``) as :func:`src.io_utils.scan_defect_tags`.
+            If the two anchors ever diverge, every code link breaks silently,
+            which is why both are derived from the same directory rather than
+            from independent constants.
+
+    Returns:
+        ``{"src/cleaning/transactions.py": {"lines": [...], "language": "python"}}``
+        -- keys are repo-relative POSIX paths (never absolute: an absolute Windows
+        path in a JSON file served to a browser leaks the developer's home
+        directory and resolves for nobody else), and ``lines`` is the complete
+        file split on newlines, so ``lines[n - 1]`` is source line ``n``.
+
+    Defects handled: all 17 (presentation -- this is what makes the
+        ``# DEFECT: <CODE>`` tags clickable rather than merely present).
+    """
+    sources: dict[str, dict[str, Any]] = {}
+    repo_root = src_dir.parent
+
+    files: list[Path] = []
+    for pattern in _SOURCE_FILE_PATTERNS:
+        files.extend(src_dir.rglob(pattern))
+
+    # WHY sorted(set(...)): rglob over several patterns can yield a file twice,
+    # and an unsorted dict makes the bundle non-diffable between runs -- the
+    # determinism guarantee this pipeline advertises has to hold for the bundle
+    # too, not just for warehouse.db.
+    for path in sorted(set(files)):
+        if "__pycache__" in path.parts or not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):  # pragma: no cover - defensive
+            # WHY skip rather than abort: an unreadable source file degrades one
+            # code link; aborting the run would throw away a complete, correct
+            # set of data artifacts over a presentation-layer inconvenience.
+            _line(f"WARNING: could not embed {path} in source_files")
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        sources[rel] = {
+            # WHY splitlines() and not split("\n"): splitlines() does not
+            # manufacture a phantom trailing empty line for a file that ends in a
+            # newline, so len(lines) is the real line count and the last tagged
+            # line in the index is always in range.
+            "lines": content.splitlines(),
+            "language": _SOURCE_LANGUAGE_BY_SUFFIX.get(path.suffix, "text"),
+        }
+    return sources
+
+
+def _verify_code_links(
+    code_index: dict[str, list[dict[str, Any]]], source_files: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Check every ``code_index`` reference resolves inside ``source_files``.
+
+    F2 was not "a helper went missing" so much as "nothing ever checked that the
+    index and the files agreed". This is that check, run on every build: a
+    reference to a file we did not ship, or to a line past the end of a file we
+    did, is reported on the console at build time instead of appearing as a red
+    box on a reviewer's screen.
+
+    Args:
+        code_index: Output of :func:`build_code_index`.
+        source_files: Output of :func:`_build_source_files`.
+
+    Returns:
+        Human-readable problems; empty means every link resolves.
+
+    Defects handled: all 17 (link integrity).
+    """
+    problems: list[str] = []
+    for code, hits in code_index.items():
+        for hit in hits:
+            path, line = hit.get("file"), int(hit.get("line", 0))
+            entry = source_files.get(str(path))
+            if entry is None:
+                problems.append(f"{code}: source_files is missing {path!r}")
+            elif not 1 <= line <= len(entry["lines"]):
+                problems.append(
+                    f"{code}: {path}:{line} is outside the shipped file "
+                    f"(1..{len(entry['lines'])})"
+                )
+    return problems
+
+
 def build_dashboard_bundle(
     result: PipelineResult, code_index: dict[str, list[dict[str, Any]]]
 ) -> dict[str, Any]:
@@ -504,6 +628,15 @@ def build_dashboard_bundle(
     Defects handled: all 17 (presentation).
     """
     cfg, audit = result.config, result.audit
+
+    # F2: build the source payload first so its integrity against the index can be
+    # reported before anything is written, not discovered by a reviewer clicking.
+    source_files = _build_source_files(SRC_DIR)
+    link_problems = _verify_code_links(code_index, source_files)
+    _line(f"source_files  {len(source_files)} file(s) embedded for the code viewer")
+    for problem in link_problems:
+        _line(f"WARNING code link  {problem}")
+
     bundle: dict[str, Any] = {
         # ── run metadata ─────────────────────────────────────────────────────
         "run": {
@@ -528,7 +661,12 @@ def build_dashboard_bundle(
         "profiling": result.profile_report,
         "analytics": result.analytics,
         # ── code links ───────────────────────────────────────────────────────
+        # F2: the index says *where* each defect is handled; source_files is what
+        # makes that reference openable. Shipping one without the other is what
+        # broke the deployed dashboard's headline feature.
         "code_index": code_index,
+        "source_files": source_files,
+        "code_link_problems": link_problems,
         # WHY a pre-computed coverage block: every dashboard view needs
         # "17 of 17 found", and computing it in three different components is
         # three chances to compute it three different ways.

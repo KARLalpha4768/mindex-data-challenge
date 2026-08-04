@@ -6,6 +6,7 @@ import { MomGrowthChart, ReturnRateChart } from "@/components/MetricCharts";
 import SqlBlock from "@/components/SqlBlock";
 import { Badge, EmptyState, ExecutiveCallout, SectionHeader, TableWrap } from "@/components/ui";
 import {
+  type ColumnUnit,
   formatInt,
   formatMetricCell,
   humaniseColumn,
@@ -25,12 +26,20 @@ import type { Bundle, Metric, MetricRow } from "@/lib/types";
  * denominator is not a metric, it is a rumour.
  */
 
+// The canonical metric ids emitted by src/analytics/queries.py METRIC_REGISTRY.
+// The alias entries exist because an earlier mock bundle used different names;
+// listing both keeps old bundles renderable. Ids present in the bundle but
+// absent here still render — they are appended after the known ones — so this
+// list controls ORDER only and can never cause a metric to disappear or to be
+// rendered as an empty card.
 const METRIC_ORDER = [
   "revenue_reconciliation",
-  "mom_growth_by_category",
+  "mom_revenue_by_category",
+  "mom_growth_by_category", // alias: pre-unit mock bundles
   "return_rate_by_store",
   "top_stores_recent_30d",
-  "aov_by_region",
+  "avg_txn_value_by_region",
+  "aov_by_region", // alias: pre-unit mock bundles
   "top_customers_lifetime",
 ];
 
@@ -121,7 +130,9 @@ function MetricCard({ id, metric }: { id: string; metric: Metric }) {
       <div className="space-y-4 px-5 py-4">
         {/* Chart, where shape carries information the table cannot. */}
         {(id === "mom_revenue_by_category" || id === "mom_growth_by_category") && <MomGrowthChart rows={metric.rows} />}
-        {id === "return_rate_by_store" && <ReturnRateChart rows={metric.rows} />}
+        {id === "return_rate_by_store" && (
+          <ReturnRateChart rows={metric.rows} units={metric.column_units} />
+        )}
 
         <SqlBlock sql={metric.sql} sqlRef={metric.sql_ref} />
 
@@ -151,7 +162,13 @@ function MetricCard({ id, metric }: { id: string; metric: Metric }) {
               </thead>
               <tbody className="divide-y divide-line">
                 {metric.rows.map((row, i) => (
-                  <MetricRowView key={i} row={row} columns={columns} rows={metric.rows} />
+                  <MetricRowView
+                    key={i}
+                    row={row}
+                    columns={columns}
+                    rows={metric.rows}
+                    units={metric.column_units}
+                  />
                 ))}
               </tbody>
             </table>
@@ -166,10 +183,12 @@ function MetricRowView({
   row,
   columns,
   rows,
+  units,
 }: {
   row: MetricRow;
   columns: string[];
   rows: MetricRow[];
+  units?: Record<string, ColumnUnit>;
 }) {
   // A row that trips an alert flag is tinted, so the return-rate breaches are
   // findable without reading every number.
@@ -181,10 +200,12 @@ function MetricRowView({
         const numeric = isNumericColumn(rows, c);
         const value = row[c];
 
-        // Growth percentages are the one place a sign colour is worth it.
-        const isGrowth = c.endsWith("_pct") || c.includes("growth");
+        // Sign colour is reserved for columns where direction is the message —
+        // growth and change. A return RATE is not better for being higher, so
+        // colouring it green was actively misleading and is gone.
+        const isDirectional = c.includes("growth") || c.includes("change");
         const growthTone =
-          isGrowth && typeof value === "number"
+          isDirectional && typeof value === "number"
             ? value > 0
               ? "text-ok"
               : value < 0
@@ -197,9 +218,9 @@ function MetricRowView({
             key={c}
             className={`td whitespace-nowrap ${numeric ? "text-right font-mono tabular-nums" : ""} ${growthTone}`}
           >
-            {typeof value === "number" && (c.includes("pct") || c.includes("rate")) && Math.abs(value) > 1.0
-              ? `${value.toFixed(2)}%`
-              : formatMetricCell(c, value)}
+            {/* One formatting path, driven by the unit the SQL author declared.
+                No magnitude sniffing, no per-component special cases. */}
+            {formatMetricCell(c, value, units?.[c])}
           </td>
         );
       })}

@@ -4,11 +4,23 @@ Coverage targets:
   - Standard DataFrame profiling (row/col counts, nulls, numeric stats)
   - Empty DataFrame edge case (zero rows, columns still exist)
   - All-null column edge case (100% null rate, no numeric stats)
-  - Date column detection (name-based and content-based heuristics)
+  - Date column detection and the multi-format report (TX-01 evidence)
+  - Reference-date comparison for future-dated values (TX-08 evidence)
   - None DataFrame edge case (raises TypeError)
 
 Each test makes meaningful assertions about specific values — not just
 "the function runs without error".
+
+DOCSTRING AUDIT (finding F8, extended)
+--------------------------------------
+The fourth bullet above previously read "Date column detection (name-based and
+content-based heuristics)" and **no such test existed** — the same
+claim-without-assertion pattern the verification report caught in
+``test_cleaning.py``'s PR-04 line. The profiler's date report is not incidental:
+``rows_lost_to_single_format`` is the number a reviewer reads as proof that a
+single ``pd.to_datetime(errors="coerce")`` call would have destroyed 20 rows,
+and ``after_as_of_count`` is the raw-data evidence behind TX-08. Both are now
+asserted below.
 """
 
 from __future__ import annotations
@@ -16,6 +28,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from src.config import AS_OF_DATE
 from src.profiling.profiler import profile
 
 
@@ -122,3 +135,80 @@ class TestProfilerEdgeCases:
         assert result["row_count"] == 1
         assert result["duplicate_row_count"] == 0
         assert col_map["x"]["null_count"] == 0
+
+
+class TestProfilerDateDetection:
+    """The date report — the profiler's TX-01 and TX-08 evidence."""
+
+    def test_mixed_format_column_is_typed_as_a_date(self) -> None:
+        """A column of three date encodings is classified ``date``, not free text.
+
+        F8-class gap: the module docstring claimed date detection was covered
+        and nothing tested it. Detection is content-based here — the column
+        could be called anything — so a regression that fell back to
+        ``free_text`` would silently suppress the whole date report, and with it
+        the only pre-cleaning evidence that TX-01 exists.
+        """
+        df = pd.DataFrame({
+            "when": ["2026-05-15", "05/16/2026", "17-05-2026", None],
+        })
+        col = _get_col_map(profile(df, "dates"))["when"]
+
+        assert col["semantic_type"] == "date"
+        assert col["type_confidence"] == 1.0
+        assert col["date"] is not None, "a date column must carry a date report"
+        assert col["numeric"] is None
+
+    def test_report_counts_the_rows_a_single_parse_would_destroy(self) -> None:
+        """TX-01 evidence: ``rows_lost_to_single_format`` is 2 of 3 observable rows.
+
+        This number is the profiler's whole argument. One
+        ``pd.to_datetime(..., format=dominant)`` pass keeps only the ISO rows and
+        NaTs the rest — the previous solution's bug #2, which then
+        mis-attributed the 20 lost rows to "future dates". Asserting the count
+        (and the per-format histogram behind it) is what makes the argument
+        checkable instead of rhetorical.
+        """
+        df = pd.DataFrame({
+            "when": ["2026-05-15", "05/16/2026", "17-05-2026", None],
+        })
+        report = _get_col_map(profile(df, "dates"))["when"]["date"]
+
+        assert report["observable_count"] == 3
+        assert report["format_histogram"] == {"%Y-%m-%d": 1, "%m/%d/%Y": 1, "%d-%m-%Y": 1}
+        assert report["distinct_format_count"] == 3
+        assert report["rows_lost_to_single_format"] == 2
+        assert report["unmatched_count"] == 0
+        assert (report["min_date"], report["max_date"]) == ("2026-05-15", "2026-05-17")
+
+    def test_single_format_column_loses_nothing(self) -> None:
+        """A clean ISO column reports one format and zero rows at risk.
+
+        The negative case. Without it, ``rows_lost_to_single_format`` could be
+        hardcoded to "everything but the first format" and still pass the test
+        above.
+        """
+        df = pd.DataFrame({"when": ["2026-05-15", "2026-05-16", "2026-05-17"]})
+        report = _get_col_map(profile(df, "iso_dates"))["when"]["date"]
+
+        assert report["distinct_format_count"] == 1
+        assert report["dominant_format"] == "%Y-%m-%d"
+        assert report["dominant_format_coverage"] == 1.0
+        assert report["rows_lost_to_single_format"] == 0
+
+    def test_future_dates_are_counted_against_the_reference_date(self) -> None:
+        """TX-08 evidence: dates past AS_OF_DATE are counted before any cleaning.
+
+        AS_OF_DATE is 2026-06-02, so 2026-07-01 is future-dated and 2026-06-02
+        itself is not — the comparison is inclusive of the reference day. This
+        is the profiler's independent corroboration of the three TX-08 rows the
+        cleaner quarantines, and nothing asserted it.
+        """
+        assert AS_OF_DATE.isoformat() == "2026-06-02", "fixture guard"
+        df = pd.DataFrame({
+            "when": ["2026-05-15", "2026-06-02", "2026-07-01", "2026-08-20"],
+        })
+        report = _get_col_map(profile(df, "future_dates"))["when"]["date"]
+
+        assert report["after_as_of_count"] == 2
+        assert sorted(report["after_as_of_examples"]) == ["2026-07-01", "2026-08-20"]

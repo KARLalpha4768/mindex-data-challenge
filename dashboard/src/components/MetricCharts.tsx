@@ -163,18 +163,46 @@ export function MomGrowthChart({ rows }: { rows: MetricRow[] }) {
  * the same judgement the `exceeds_alert_threshold` column makes, so the chart
  * and the table can never disagree.
  */
-export function ReturnRateChart({ rows }: { rows: MetricRow[] }) {
+export function ReturnRateChart({
+  rows,
+  units,
+}: {
+  rows: MetricRow[];
+  units?: Record<string, string>;
+}) {
   const mounted = useMounted();
+
+  // Recharts plots on a 0-1 axis here, so both series are normalised to ratios
+  // ONCE, using the unit the SQL author declared — never by testing whether the
+  // number happens to be bigger than 1. A store with a 150% return rate (more
+  // units returned than sold in the window, which is possible when a return
+  // lands in a later period than its sale) would have been silently divided by
+  // 100 under the old magnitude test.
+  const toRatio = React.useCallback(
+    (value: unknown, column: string, fallbackColumn: string): number => {
+      const n = Number(value ?? 0);
+      if (!Number.isFinite(n)) return NaN;
+      const unit = units?.[column] ?? units?.[fallbackColumn];
+      if (unit === "ratio") return n;
+      if (unit === "percent") return n / 100;
+      // Unit-less legacy bundle: fall back to the naming convention.
+      return column.endsWith("_pct") ? n / 100 : n;
+    },
+    [units],
+  );
 
   const data = React.useMemo(
     () =>
       rows
         .map((r) => {
-          let unitVal = Number(r.unit_return_rate_pct ?? r.return_rate_units ?? 0);
-          let txVal = Number(r.txn_return_rate_pct ?? r.return_rate_transactions ?? 0);
-          // If stored as 0-100 percentage (e.g. 13.73), convert to 0-1 ratio (0.1373)
-          if (unitVal > 1) unitVal = unitVal / 100;
-          if (txVal > 1) txVal = txVal / 100;
+          const unitVal =
+            r.unit_return_rate_pct !== undefined
+              ? toRatio(r.unit_return_rate_pct, "unit_return_rate_pct", "")
+              : toRatio(r.return_rate_units, "return_rate_units", "");
+          const txVal =
+            r.txn_return_rate_pct !== undefined
+              ? toRatio(r.txn_return_rate_pct, "txn_return_rate_pct", "")
+              : toRatio(r.return_rate_transactions, "return_rate_transactions", "");
           return {
             store: String(r.store_id),
             name: String(r.store_name ?? r.store_id),
@@ -184,7 +212,7 @@ export function ReturnRateChart({ rows }: { rows: MetricRow[] }) {
         })
         .filter((d) => Number.isFinite(d.rate))
         .sort((a, b) => b.rate - a.rate),
-    [rows],
+    [rows, toRatio],
   );
 
   if (!data.length) {

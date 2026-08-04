@@ -61,6 +61,9 @@ import numpy as np
 import pandas as pd
 
 from src.audit import AuditLog, DefectRecord
+# F16: the quarantine disposition vocabulary is shared with stores.py and defined
+# once in config.py, so the two modules cannot drift to different spellings.
+from src.config import DISPOSITION_DROPPED, DISPOSITION_EVIDENCE
 from src.defects import DefectCode
 
 # ── Column contracts ──────────────────────────────────────────────────────────
@@ -264,7 +267,11 @@ def drop_exact_duplicates(df: pd.DataFrame, audit: AuditLog) -> pd.DataFrame:
     if detected:
         # WHY quarantine before dropping (contract §7b): nothing leaves this
         # pipeline without leaving a row on disk saying it did.
-        audit.quarantine("products", out.loc[duplicate_mask, present], DefectCode.PR_01_EXACT_DUPLICATE)
+        evidence = out.loc[duplicate_mask, present].copy()
+        # F16: state the disposition explicitly. See the DISPOSITION_* banner.
+        # Every row in this particular slice really is removed from the output.
+        evidence.insert(1, "disposition", DISPOSITION_DROPPED)
+        audit.quarantine("products", evidence, DefectCode.PR_01_EXACT_DUPLICATE)
         keys = out.loc[duplicate_mask, BUSINESS_KEY].astype(str).tolist()
         audit.record(
             DefectRecord(
@@ -368,6 +375,38 @@ def resolve_price_conflicts(df: pd.DataFrame, audit: AuditLog) -> pd.DataFrame:
         for column in differing:
             policy = CONFLICT_RESOLUTION_POLICY.get(column, _policy_first_non_null)
             winner[column] = policy(group[column])  # DEFECT: PR-02
+
+        # ── M2 · the elected list price must BE the observed maximum ─────────
+        # WHY this assertion exists: an adversarial audit swapped MAX for MIN in
+        #   CONFLICT_RESOLUTION_POLICY and the pipeline still printed
+        #   "PR-02 · Expected 1 · Detected 1 · OK". The completeness proof counts
+        #   *detections*, so it cannot see that the detection resolved the wrong
+        #   way — P005's list price silently became 141.61 instead of 150.11,
+        #   reversing the exact finding PR-02 exists to surface, while the coverage
+        #   table gave false assurance. Counting a defect is not the same as
+        #   handling it correctly, and only this line says so.
+        # DECISION: bind the published decision to a post-condition on the data.
+        #   The policy table stays the single place the rule is *declared*; this is
+        #   the place it is *proved*, on real values, on every run. Anyone who
+        #   genuinely intends to elect the minimum must change this line too, and
+        #   changing it is an explicit statement rather than a silent flip.
+        # WHY a tolerance rather than equality: the elected cell is still a string
+        #   at this stage (typing happens once, in _finalize_types), so the
+        #   comparison goes through parse_price and is a float comparison. Half a
+        #   cent is far below any real price difference and far above float noise.
+        if "unit_price" in differing:
+            observed_prices = group["unit_price"].map(parse_price).dropna()
+            elected_price = parse_price(winner["unit_price"])
+            assert abs(float(observed_prices.max()) - float(elected_price)) <= 0.005, (
+                f"PR-02 survivorship broke its own published rule for {key}: elected list "
+                f"price {elected_price} is not the observed maximum "
+                f"{float(observed_prices.max())} of {sorted(observed_prices.tolist())}. "
+                "CONFLICT_RESOLUTION_POLICY['unit_price'] must elect MAX -- the audit note, "
+                "the README and the defect catalog all state that it does, and electing any "
+                "other value silently reverses the PR-02 finding while the coverage table "
+                "still reports OK."
+            )
+
         # WHY the flag is named for price rather than "has_conflict": the
         # warehouse contract fixes this column, and price is the attribute whose
         # ambiguity actually changes how a downstream number should be read.
@@ -385,13 +424,29 @@ def resolve_price_conflicts(df: pd.DataFrame, audit: AuditLog) -> pd.DataFrame:
             prices = sorted(group["unit_price"].map(parse_price).dropna().tolist())
             delta = round(prices[-1] - prices[0], 2) if len(prices) > 1 else 0.0
             detail += f" (delta ${delta:,.2f})"
+            # M2: put the verified fact in the report, not just in the code. A
+            # reader of audit_report.json can now see that the elected value was
+            # checked against the observed maximum on this run's actual data,
+            # rather than taking the policy table's word for it.
+            elected += f" [runtime-verified: elected unit_price == MAX{tuple(prices)}]"
         notes.append(f"{key} -> conflicting {detail}; elected {elected} by policy")
 
         evidence = group[[BUSINESS_KEY, *payload_columns]].copy()
         evidence["conflicting_columns"] = ", ".join(differing)
-        evidence["elected"] = [
+        elected_flags = [
             all(str(row[c]) == str(winner[c]) for c in differing) for _, row in group.iterrows()
         ]
+        evidence["elected"] = elected_flags
+        # F16: this slice is the one place in the products quarantine where the two
+        # dispositions sit side by side — the elected row survives into
+        # dim_product, the row it beat does not. Labelling them makes the CSV
+        # self-reconciling: count the 'dropped' rows and you get the difference
+        # between the raw row count and dim_product's, exactly.
+        evidence.insert(
+            1,
+            "disposition",
+            [DISPOSITION_EVIDENCE if won else DISPOSITION_DROPPED for won in elected_flags],
+        )
         evidence_frames.append(evidence)
 
     if evidence_frames:
@@ -558,6 +613,11 @@ def flag_zero_prices(df: pd.DataFrame, audit: AuditLog) -> pd.DataFrame:
     evidence = out.loc[invalid_mask, [BUSINESS_KEY, "product_name", "category", "unit_price"]].copy()
     evidence["imputed_unit_price"] = [replacements[i] for i in out.index[invalid_mask]]
     evidence["note"] = "0.00 read as missing; transactions independently ring P027 at 195.34"
+    # F16: P027 is NOT dropped -- it is kept with an imputed price and a
+    # price_is_imputed flag. Without this label a reader summing the quarantine
+    # CSVs computes 32 - 4 = 28 products and cannot reconcile it against
+    # dim_product's 30. The row is here for review, not for removal.
+    evidence.insert(1, "disposition", DISPOSITION_EVIDENCE)
     audit.quarantine("products", evidence, DefectCode.PR_04_ZERO_PRICE)
 
     for idx, value in replacements.items():

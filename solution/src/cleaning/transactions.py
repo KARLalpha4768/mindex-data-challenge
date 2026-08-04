@@ -91,9 +91,11 @@ Inputs:  an all-string DataFrame from :func:`src.io_utils.read_csv_as_str`, the
          shared :class:`~src.audit.AuditLog`, and the surviving key sets from the
          already-cleaned store and product dimensions.
 Outputs: the cleaned fact frame (columns fixed by contract §4), a full row-level
-         lineage frame at ``output/quarantine/transactions__lineage.csv``, one
-         quarantine CSV per excluded defect code, and audit records for all ten
-         codes.
+         lineage frame written to ``<lineage_dir>/transactions__lineage.csv`` --
+         the directory is a required argument, never an import-time constant, so
+         ``--output-dir`` governs it and a test can never write into the shipped
+         artifact (F3) -- one quarantine CSV per excluded defect code, and audit
+         records for all ten codes.
 """
 
 from __future__ import annotations
@@ -105,7 +107,13 @@ from typing import Any, Final
 import pandas as pd
 
 from src.audit import AuditLog, DefectRecord
-from src.config import AS_OF_DATE, GUEST_CUSTOMER_ID, PRICE_TOLERANCE, QUARANTINE_DIR
+# F3: ``QUARANTINE_DIR`` is deliberately NOT imported here any more. It used to be
+# the default value of ``clean_transactions(lineage_dir=...)``, which bound the
+# lineage artifact to an import-time project path: ``--output-dir`` was ignored for
+# that one file, and the test suite (which never passed the argument) overwrote the
+# real 505-row lineage proof with two rows of fixture data. The caller must now
+# state where the artifact goes. See the signature of :func:`clean_transactions`.
+from src.config import AS_OF_DATE, GUEST_CUSTOMER_ID, PRICE_TOLERANCE
 from src.defects import DefectCode
 from src.io_utils import write_dataframe_csv
 from src.cleaning.rules import (
@@ -1256,15 +1264,29 @@ def _project_output(kept: pd.DataFrame) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════════════
 # Public entry point
 # ══════════════════════════════════════════════════════════════════════════════
+# ── F3 · lineage_dir is required and keyword-only ─────────────────────────────
+# WHY: the previous signature defaulted ``lineage_dir`` to the import-time constant
+#   ``config.QUARANTINE_DIR``. Two consequences, both proven by the verification
+#   report: (1) ``python -m src.pipeline --output-dir /tmp/x`` still wrote
+#   ``transactions__lineage.csv`` into the project's own output directory, so the
+#   CLI flag was a lie for that artifact; (2) every ``pytest`` run silently
+#   overwrote the deliverable's 505-row lineage proof with its 2-row fixture.
+# DECISION: no default, keyword-only. A caller that writes an artifact must say
+#   where. ``None`` remains legal and is the explicit "do not touch the filesystem"
+#   choice for unit tests -- but it now has to be typed out, so it can never happen
+#   by accident.
+# ALTERNATIVE REJECTED: keeping the default and having pipeline.py override it.
+#   That fixes the CLI but leaves the test suite writing into the deliverable,
+#   which is the more damaging half of the bug.
 def clean_transactions(
     df: pd.DataFrame,
     audit: AuditLog,
     valid_store_ids: set[str],
     valid_product_ids: set[str],
     *,
+    lineage_dir: Path | None,
     as_of_date: dt.date = AS_OF_DATE,
     tolerance: float = PRICE_TOLERANCE,
-    lineage_dir: Path | None = QUARANTINE_DIR,
 ) -> pd.DataFrame:
     """Clean ``transactions.csv``: detect ten defect classes, decide, and account.
 
@@ -1283,12 +1305,14 @@ def clean_transactions(
             dimension, used for TX-04.
         valid_product_ids: ``product_id`` values surviving in the cleaned product
             dimension, used for TX-05.
+        lineage_dir: **Required, keyword-only.** Directory to write
+            ``transactions__lineage.csv`` into -- normally ``cfg.quarantine_dir``.
+            Pass ``None`` to suppress the write entirely (the correct choice for
+            unit tests). There is deliberately no default: see the F3 banner above.
         as_of_date: Reference "today" for TX-08. Defaults to
             :data:`src.config.AS_OF_DATE` (2026-06-02). Never ``datetime.now()``.
         tolerance: Dollar threshold for the TX-03 reconciliation break. Defaults
             to :data:`src.config.PRICE_TOLERANCE`.
-        lineage_dir: Where to write ``transactions__lineage.csv``. Pass ``None``
-            to suppress the write.
 
     Returns:
         A DataFrame with exactly :data:`OUTPUT_COLUMNS`. Two extras ride along in

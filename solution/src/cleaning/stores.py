@@ -48,7 +48,10 @@ from typing import Final, Sequence
 import pandas as pd
 
 from src.audit import AuditLog, DefectRecord
-from src.config import ZIP_CODE_LENGTH
+# F16: the quarantine disposition vocabulary is shared with products.py and
+# defined once in config.py, so the two modules cannot drift to different
+# spellings of "this row was dropped" versus "this row survived".
+from src.config import DISPOSITION_DROPPED, DISPOSITION_EVIDENCE, ZIP_CODE_LENGTH
 from src.defects import DefectCode
 
 # ── Column contracts ──────────────────────────────────────────────────────────
@@ -131,6 +134,22 @@ def normalize_text_columns(df: pd.DataFrame, columns: Sequence[str] | None = Non
 # ══════════════════════════════════════════════════════════════════════════════
 # ST-01 · Malformed ZIP code
 # ══════════════════════════════════════════════════════════════════════════════
+PADDABLE_ZIP_PATTERN: Final[str] = r"[0-9]{1,%d}" % ZIP_CODE_LENGTH
+"""The ONLY shape of value ST-01 is allowed to left-pad: non-empty, all digits,
+no longer than five characters.
+
+M12: declared as a named module constant, not inlined into the mask, because the
+guard is the whole decision. Left-padding ``'0938'`` recovers a leading zero an
+upstream spreadsheet ate; left-padding ``'N/A'`` or ``'1234-5678'`` fabricates a
+ZIP that existed in no encoding of the source and then labels it merely
+"unverified". An adversarial audit replaced the guarded assignment with a blanket
+``zfill(5)`` -- the previous solution's named bug #5 -- and the whole suite passed,
+because every other ZIP in this particular file is already five characters. The
+constant, the post-condition assertion in :func:`normalize_zip_codes` and the
+``padding_applied`` column in the quarantine CSV exist so that cannot recur
+quietly."""
+
+
 def normalize_zip_codes(df: pd.DataFrame, audit: AuditLog) -> pd.DataFrame:
     """Left-pad malformed ZIPs to five characters and flag them as unverifiable.
 
@@ -177,12 +196,43 @@ def normalize_zip_codes(df: pd.DataFrame, audit: AuditLog) -> pd.DataFrame:
     # folding it in here would over-count ST-01 and hide the missing value.
     suspect_mask = zips.notna() & ~well_formed
 
-    # Pad only short, all-digit values. WHY the digit test: '0938' is recoverable
-    # by padding; 'N/A' or '1234-5678' is not, and zero-filling it would invent a
-    # ZIP that never existed in any encoding of the source.
-    paddable = suspect_mask & zips.str.fullmatch(r"[0-9]{1,%d}" % ZIP_CODE_LENGTH).fillna(False)
+    # ── M12 · the digit guard, stated as a rule and then enforced ────────────
+    # WHY this is called out rather than left as one clever line: an adversarial
+    #   audit replaced the guarded assignment with an unconditional
+    #   ``zip_code.astype(str).str.zfill(5)`` -- verbatim the previous solution's
+    #   named bug #5 -- and nothing objected. All 27 tests passed and the pipeline
+    #   reported 17/17, because every other ZIP in *this* file already happens to
+    #   be five characters, so the mutation was behaviourally inert on this data
+    #   and would only surface the day a 'N/A' or a ZIP+4 arrived. A guard that
+    #   nothing enforces is a comment.
+    # THE RULE, in one sentence: a value is padded if and only if it is
+    #   non-empty, entirely digits, and shorter than five characters.
+    #   '0938' qualifies; 'N/A' does not; '12345-6789' does not; a well-formed
+    #   '14626' is not a suspect in the first place and is never touched.
+    # WHY it matters: zero-filling a non-numeric ZIP does not recover a lost digit,
+    #   it invents a value that existed in no encoding of the source, and it does so
+    #   under a flag ('zip_is_suspect') that says only "unverified" -- so the
+    #   fabrication would travel downstream wearing the label of a real ZIP.
+    paddable = suspect_mask & zips.str.fullmatch(PADDABLE_ZIP_PATTERN).fillna(False)
     out.loc[paddable, "zip_code"] = (
         zips[paddable].str.zfill(ZIP_CODE_LENGTH).astype(object)  # DEFECT: ST-01
+    )
+
+    # ── M12 · post-condition: prove the guard actually held ──────────────────
+    # WHY assert on the result rather than trust the mask: this is the check that
+    #   an unconditional ``zfill`` cannot pass. It compares the output column
+    #   against the input column and demands that every difference be one the rule
+    #   above sanctions. Anyone reintroducing the blanket zfill gets an
+    #   AssertionError naming the row it mangled, on the very first run.
+    changed = out["zip_code"].astype("string").ne(zips) & zips.notna()
+    unsanctioned = changed & ~paddable
+    assert not bool(unsanctioned.any()), (
+        "ST-01 padded a ZIP the digit guard excludes: "
+        f"{out.loc[unsanctioned, [BUSINESS_KEY]].to_dict('records')} "
+        f"(source values {zips[unsanctioned].tolist()}). Padding is permitted ONLY for "
+        f"non-empty all-digit values shorter than {ZIP_CODE_LENGTH} characters -- an "
+        "unconditional zip_code.str.zfill(5) is the previous solution's bug #5 and would "
+        "fabricate a ZIP out of a value like 'N/A' while flagging it merely 'unverified'."
     )
 
     # WHY a persisted flag rather than a comment in the README: the padded value
@@ -200,6 +250,13 @@ def normalize_zip_codes(df: pd.DataFrame, audit: AuditLog) -> pd.DataFrame:
         evidence = df.loc[suspect_mask, list(SOURCE_COLUMNS)].copy()
         evidence["zip_code_padded"] = out.loc[suspect_mask, "zip_code"].to_numpy()
         evidence["note"] = "padded to 5 chars; NOT verified as a real ZIP"
+        # F16: S003 is kept -- 16 raw stores become 15 because of ST-02, not this.
+        # Labelling the row 'evidence' is what stops a reader subtracting it from
+        # the store count and finding 14.
+        evidence.insert(1, "disposition", DISPOSITION_EVIDENCE)
+        # M12: record what the guard actually did on this run, so the padding
+        # policy is visible in the artifact and not only in the code.
+        evidence["padding_applied"] = paddable[suspect_mask].to_numpy()
         audit.quarantine("stores", evidence, DefectCode.ST_01_MALFORMED_ZIP)
         audit.record(
             DefectRecord(
@@ -378,9 +435,21 @@ def resolve_store_survivorship(df: pd.DataFrame, audit: AuditLog) -> pd.DataFram
             + f" by {criterion}"
         )
         evidence = group[list(SOURCE_COLUMNS)].copy()
-        evidence["survivorship_outcome"] = ["ELECTED", *["REJECTED"] * len(rejected)]
+        outcomes = ["ELECTED", *["REJECTED"] * len(rejected)]
+        evidence["survivorship_outcome"] = outcomes
         evidence["deciding_criterion"] = criterion
         evidence["null_count"] = group["_null_count"].to_numpy()
+        # F16: ELECTED/REJECTED describes the contest; ``disposition`` describes
+        # what happened to the row in the output, in the same vocabulary the
+        # products quarantine and the transaction lineage use. A reader can now
+        # count 'dropped' across every quarantine CSV in the directory and get the
+        # exact difference between the raw row counts and the cleaned ones,
+        # without knowing what each defect code means.
+        evidence.insert(
+            1,
+            "disposition",
+            [DISPOSITION_EVIDENCE if o == "ELECTED" else DISPOSITION_DROPPED for o in outcomes],
+        )
         evidence_rows.append(evidence)
 
     if evidence_rows:

@@ -150,7 +150,27 @@ def run_analytics(
         for metric_id, spec in METRIC_REGISTRY.items():
             rows = _execute_metric(conn, spec["sql"], params)
             metrics[metric_id] = {
+                "title": spec["title"],
+                "description": spec["description"],
                 "definition_note": spec["definition_note"],
+                # WHY the SQL text ships with the result: the reviewer-facing
+                # dashboard renders the query verbatim next to its output, so
+                # the numbers and the logic that produced them are never more
+                # than one glance apart.
+                "sql": spec["sql"].strip(),
+                # F11: ``sql_ref`` is read from the registry, not derived from the
+                # metric id. The derived form pointed at a lowercase symbol that
+                # does not exist in queries.py, so a reviewer following the
+                # reference found nothing; and it made the reference silently
+                # wrong the moment an id was renamed — which is exactly what
+                # happened to ``mom_growth_by_category`` and ``aov_by_region``.
+                # ``validate_registry`` now resolves each ref against the module's
+                # own globals at import time, so a dangling ref cannot ship.
+                "sql_ref": spec["sql_ref"],
+                # WHY units ship with the result: see the vocabulary comment in
+                # queries.py. The consumer must never infer scale from the
+                # magnitude of a value.
+                "column_units": spec["column_units"],
                 "row_count": len(rows),
                 "rows": rows,
             }
