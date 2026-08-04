@@ -197,7 +197,9 @@ function MetricRowView({
             key={c}
             className={`td whitespace-nowrap ${numeric ? "text-right font-mono tabular-nums" : ""} ${growthTone}`}
           >
-            {formatMetricCell(c, value)}
+            {typeof value === "number" && (c.includes("pct") || c.includes("rate")) && Math.abs(value) > 1.0
+              ? `${value.toFixed(2)}%`
+              : formatMetricCell(c, value)}
           </td>
         );
       })}

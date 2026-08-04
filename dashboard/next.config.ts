@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   trailingSlash: true,
   reactStrictMode: true,
+  generateBuildId: async () => `build-${Date.now()}`,
 };
 
 export default nextConfig;
