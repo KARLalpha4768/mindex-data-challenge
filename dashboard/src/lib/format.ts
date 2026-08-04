@@ -90,15 +90,23 @@ export function formatMetricCell(column: string, value: unknown): string {
 
   const name = column.toLowerCase();
   if (typeof value === "number") {
-    // Columns ending in _pct already carry percentage values (12.5, not 0.125).
-    // Must check this BEFORE the generic "rate" check to avoid double-multiplication.
-    if (name.endsWith("_pct")) {
-      // Growth/change percentages get a sign prefix; rate percentages do not.
-      if (name.includes("growth") || name.includes("change")) return formatSignedPct(value, 2);
+    const isPctColumn = name.endsWith("_pct") || name.endsWith(" pct") || name.includes("pct");
+    const isGrowth = name.includes("growth") || name.includes("change");
+
+    if (isPctColumn) {
+      if (isGrowth) return formatSignedPct(value, 2);
       return formatAlreadyPct(value, 2);
     }
-    // "rate" without _pct suffix means a 0-1 ratio.
-    if (name.includes("rate") || name.includes("pct_of")) return formatRatioPct(value, 2);
+
+    if (name.includes("rate") || name.includes("pct_of")) {
+      // If value > 1 or < -1, it is already a 0-100 percentage (e.g. 12.5), not a 0-1 ratio (0.125)
+      if (Math.abs(value) > 1) {
+        if (isGrowth) return formatSignedPct(value, 2);
+        return formatAlreadyPct(value, 2);
+      }
+      return formatRatioPct(value, 2);
+    }
+
     if (name.includes("growth")) return formatSignedPct(value, 2);
     if (
       name.includes("revenue") ||
