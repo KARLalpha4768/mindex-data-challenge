@@ -125,7 +125,7 @@ const GEMINI_API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
  * No key in the URL: it goes in `x-goog-api-key`, same as generateContent.
  */
 const LIST_MODELS_URL = `${GEMINI_API_ROOT}/models?pageSize=1000`;
-const INTERACTIONS_URL = `https://generativelanguage.googleapis.com/v1beta2/interactions`;
+const INTERACTIONS_URL = `https://generativelanguage.googleapis.com/v1beta/interactions`;
 
 function generateContentUrl(model: string): string {
   return INTERACTIONS_URL;
