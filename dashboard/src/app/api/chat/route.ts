@@ -1,7 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { README_CONTEXT } from '@/lib/readmeContext';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,19 +10,11 @@ export async function POST(req: Request) {
   try {
     const { message } = await req.json();
 
-    const readmePath = path.join(process.cwd(), '../README.md');
-    let readmeContent = '';
-    try {
-      readmeContent = fs.readFileSync(readmePath, 'utf-8');
-    } catch {
-      readmeContent = 'MINDEX Data Engineer Code Challenge Repository Context';
-    }
-
     const systemInstruction = `You are an expert technical assistant representing Karl David's MINDEX Data Engineer Code Challenge submission.
-Your answers MUST be strictly based on the technical details, architecture decisions, defect catalogs, and metric definitions found in the provided README document.
+Your answers MUST be strictly based on the technical details, architecture decisions, defect catalogs, and metric definitions provided.
 
 <README_DOCUMENT>
-${readmeContent}
+${README_CONTEXT}
 </README_DOCUMENT>`;
 
     const streamResult = await ai.models.generateContentStream({
