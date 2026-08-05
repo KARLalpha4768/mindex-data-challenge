@@ -268,6 +268,7 @@ export function runSummaryAnswer(facts: RunFacts): ScriptedAnswer {
     `  net revenue                 ${formatCurrency(r.netRevenue)}`,
     `  line-level delta            ${formatCurrency(r.lineLevelDelta)}`,
     `  aggregate delta             ${formatCurrency(r.aggregateDelta)}`,
+    `  reconciliation delta        ${formatCurrency(r.reconciliationDelta)}`,
   ].join("\n");
 
   return {
@@ -400,6 +401,146 @@ export function buildScriptedAnswers(bundle: Bundle): ScriptedAnswer[] {
   const tradeoffs = tradeoffAnswers(bundle, facts);
 
   return [runSummaryAnswer(facts), ...tradeoffs, ...defects, ...metrics];
+}
+
+/* ────────────────────────────────────────────────────────────────────────── *
+ * The ten interview questions
+ *
+ * WHY THEY ARE CHIPS
+ * ------------------
+ * A reviewer who opens the assistant panel is given a text box and no idea what
+ * this thing knows. The ten questions in `INTERVIEW_QA.md` are the hardest ones
+ * this submission can answer — they are the ones that separate "the pipeline
+ * ran" from "the pipeline made defensible choices" — and leaving a reviewer to
+ * guess at them wastes the artefact's best material.
+ *
+ * They are ranked 1 (strongest) to 10, the same order as the document, and the
+ * panel shows the top few with a disclosure for the rest so that ten chips do
+ * not swamp a panel whose main job is the transcript.
+ *
+ * Unlike the bundle-derived chips, clicking one of these asks the question
+ * through the NORMAL path: live model when one is configured, scripted answer
+ * when not. They are questions, not canned answers — a reviewer who sees the
+ * live assistant handle question 1 has learnt something a scripted reply could
+ * not have told them.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export interface InterviewQuestion {
+  /** 1 = strongest. Matches the ranking in INTERVIEW_QA.md. */
+  rank: number;
+  /** Short chip text. Full question goes in the transcript and to the model. */
+  chip: string;
+  question: string;
+  /**
+   * Which scripted answer to use when there is no live model.
+   *
+   * Resolved against `label` first, then `defectCode`, then free-text search —
+   * so a hint that goes stale degrades to the existing offline matcher rather
+   * than to silence. Free-text search alone is not enough here: "June 2026
+   * shows a 98% revenue collapse" has no term in common with the label
+   * "Metric mom_growth_by_category".
+   */
+  scriptedHint: string;
+}
+
+/** Ranked 1-10, verbatim from INTERVIEW_QA.md. */
+export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
+  {
+    rank: 1,
+    chip: "Why not recompute total_amount?",
+    question:
+      "If I recomputed total_amount as quantity × unit_price, the data would be internally " +
+      "consistent. Why is that wrong, and what would it cost?",
+    scriptedHint: "TX-03",
+  },
+  {
+    rank: 2,
+    chip: "P005 twice — duplicate or price change?",
+    question:
+      "P005 appears twice. Why isn't that a duplicate, and why does dim_product carry a price " +
+      "no transaction ever rang at?",
+    scriptedHint: "PR-02",
+  },
+  {
+    rank: 3,
+    chip: "Two return-rate denominators",
+    question:
+      "You report two return-rate denominators. Which stores breach 10% under each, and does " +
+      "the choice change who gets flagged?",
+    scriptedHint: "TX-10",
+  },
+  {
+    rank: 4,
+    chip: "June's 98% revenue collapse",
+    question: "June 2026 shows a 98% revenue collapse. What happened to the business?",
+    scriptedHint: "Metric mom_growth_by_category",
+  },
+  {
+    rank: 5,
+    chip: "Account for all 505 rows",
+    question:
+      "Account for all 505 transaction rows. Where did the 31 that aren't in fact_sales go?",
+    scriptedHint: "Run summary",
+  },
+  {
+    rank: 6,
+    chip: "Null customer_id → guest, not error",
+    question:
+      "Show me the line that decides a null customer_id is a guest rather than an error — and " +
+      "why keep those rows?",
+    scriptedHint: "TX-06",
+  },
+  {
+    rank: 7,
+    chip: "Null region — why West, not East?",
+    question: "Two stores had a null region. What did you impute, and why not \"East\"?",
+    scriptedHint: "ST-03",
+  },
+  {
+    rank: 8,
+    chip: "ZIP 0938 → 00938, still wrong",
+    question:
+      "S003's zip is 0938. You padded it to 00938, but that isn't a real New York zip. Why " +
+      "present a wrong value?",
+    scriptedHint: "ST-01",
+  },
+  {
+    rank: 9,
+    chip: "Three date formats — parsed right?",
+    question:
+      "Twenty dates were in three formats. How do you know they parsed correctly rather than " +
+      "silently parsing wrong?",
+    scriptedHint: "TX-01",
+  },
+  {
+    rank: 10,
+    chip: "What can line_level_delta miss?",
+    question: "What would make line_level_delta non-zero, and what can it not detect?",
+    scriptedHint: "revenue_reconciliation",
+  },
+];
+
+/**
+ * Offline resolution for an interview chip.
+ *
+ * Three-step fallback (label, then defect code, then the ordinary free-text
+ * matcher) so that a renamed scripted answer degrades the result rather than
+ * breaking the chip. Exported for the tests: every hint must resolve to
+ * something, and "something" must not be the run-summary fallback except where
+ * that is the intended target.
+ */
+export function resolveInterviewAnswer(
+  answers: ScriptedAnswer[],
+  item: InterviewQuestion,
+): ScriptedAnswer {
+  const hint = item.scriptedHint;
+  const byLabel = answers.find((a) => a.label === hint || a.label.startsWith(hint));
+  if (byLabel) return byLabel;
+  const byCode = answers.find((a) => a.defectCode === hint);
+  if (byCode) return byCode;
+  const byMetric = answers.find((a) => a.label === `Metric ${hint}`);
+  if (byMetric) return byMetric;
+  return findScriptedAnswer(answers, item.question);
 }
 
 /**

@@ -1,59 +1,58 @@
-import { GoogleGenAI } from '@google/genai';
-import { NextResponse } from 'next/server';
+/**
+ * The only server route in the app: the grounded reviewer's assistant.
+ *
+ * This file is deliberately a thin adapter. Next.js validates the export
+ * surface of a `route.ts` — HTTP verbs and a fixed set of segment-config
+ * constants, nothing else — so all of the logic (validation, limits, retrieval,
+ * the upstream call, the error taxonomy and the numeric self-audit) lives in
+ * `src/lib/chatHandler.ts`, where a test can import it without booting Next.
+ * That is the only way the failure paths are exercisable from a sandbox with no
+ * route to the model API. See `tests/chat.test.ts`.
+ *
+ * WHY THIS FILE WAS REWRITTEN
+ * ---------------------------
+ * It previously carried a second, older implementation of the assistant: a
+ * `@google/genai` streaming call against `gemini-2.5-flash`, grounded on a
+ * hand-typed six-line summary of the pipeline with the run's dollar figures
+ * pasted into a template literal. Three problems, in ascending order of
+ * seriousness:
+ *
+ *   1. It did not implement the contract the browser speaks. `ChatAssistant`
+ *      probes `GET /api/chat` for `{ configured, model, bundleAvailable }` and
+ *      POSTs `{ question, history }` expecting a JSON `ChatResponse`. This file
+ *      exported no GET, and read `message` from the body. Every live request
+ *      therefore failed and the panel fell back to offline mode permanently —
+ *      the entire grounded path was dead code in the deployed artefact.
+ *   2. Its figures were typed in by hand, which is precisely the defect that
+ *      `presets.ts` was restructured to eliminate: hand-typed numbers are
+ *      correct only until the pipeline is re-run.
+ *   3. Grounding on a six-line summary is not grounding. Any question outside
+ *      those six lines was answered from the model's own memory, with nothing
+ *      to check it against.
+ *
+ * `chatHandler.ts` and `README.md` both already described this file as a thin
+ * adapter over the handler. It now is one.
+ *
+ * `GEMINI_API_KEY` is read inside `chatHandler`, from `process.env`, on the
+ * server only. It is never named with a `NEXT_PUBLIC_` prefix, never placed in
+ * a URL, and never included in a response body.
+ */
 
-export const dynamic = 'force-dynamic';
+import { handleChatPost, handleChatStatus } from "@/lib/chatHandler";
 
-const README_CONTEXT = `
-MINDEX Data Engineer Code Challenge - Pipeline & Architecture Summary
-- 17 Defect Classes Reconciled (ST-01 to ST-03, PR-01 to PR-04, TX-01 to TX-10)
-- Net Revenue: $158,044.29 ($0.00 Reconciliation Delta)
-- Gross Sales: $168,957.80 | Returns: -$9,952.03 | Silent Discounts: $961.48
-- Fact Table: 474 valid sales rows, 38 quarantined records in audit ledger
-- Database: SQLite Star Schema Warehouse (warehouse.db)
-`;
+/**
+ * Never statically evaluated at build time. The route reads an environment
+ * variable and a per-request body; `next build` must report it as `ƒ (Dynamic)`
+ * rather than folding a build-time answer into the static export.
+ */
+export const dynamic = "force-dynamic";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+/** Capability probe. Returns a boolean about the key, never the key. */
+export function GET(): Response {
+  return handleChatStatus();
+}
 
-export async function POST(req: Request) {
-  try {
-    const { message } = await req.json();
-
-    const systemInstruction = `You are an expert technical assistant representing Karl David's MINDEX Data Engineer Code Challenge submission.
-Your answers MUST be strictly based on the technical details, architecture decisions, defect catalogs, and metric definitions provided.
-
-<README_DOCUMENT>
-${README_CONTEXT}
-</README_DOCUMENT>`;
-
-    const streamResult = await ai.models.generateContentStream({
-      model: 'gemini-2.5-flash',
-      contents: message,
-      config: {
-        systemInstruction,
-        temperature: 0.2,
-      },
-    });
-
-    const encoder = new TextEncoder();
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        for await (const chunk of streamResult) {
-          if (chunk.text) {
-            controller.enqueue(encoder.encode(chunk.text));
-          }
-        }
-        controller.close();
-      },
-    });
-
-    return new Response(readableStream, {
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
-      },
-    });
-  } catch (error) {
-    console.error('Chatbot Streaming API Error:', error);
-    return NextResponse.json({ error: 'Failed to generate response' }, { status: 500 });
-  }
+/** The grounded answer. Everything of substance is in `chatHandler`. */
+export function POST(request: Request): Promise<Response> {
+  return handleChatPost(request);
 }

@@ -43,6 +43,7 @@ import {
   type ChatTurn,
 } from "./chatContract";
 import { SYSTEM_INSTRUCTION, selectContext } from "./grounding";
+import { auditAgainstContext } from "./numericAudit";
 import { clientKeyFrom, rateLimit } from "./rateLimit";
 import type { Bundle } from "./types";
 
@@ -387,6 +388,14 @@ export async function handleChatPost(
       ? `${answerText}\n\n[Answer truncated at the ${MAX_OUTPUT_TOKENS}-token output cap.]`
       : answerText;
 
+  /* 8. Numeric self-audit. The system instruction forbids stating a figure that
+   *    is not in the context; this is the part that CHECKS rather than asks.
+   *    Deliberately non-blocking: a warned answer is still returned, with the
+   *    unverified figures named, because suppressing it would leave the
+   *    reviewer with nothing and no explanation. Pure and local — it adds no
+   *    network call and no measurable latency to the request. */
+  const audit = auditAgainstContext(answer, context.text);
+
   return ok({
     ok: true,
     answer: redact(answer, apiKey),
@@ -397,7 +406,9 @@ export async function handleChatPost(
       includedIds: context.includedIds,
       droppedIds: context.droppedIds,
       mentionedCodes: context.mentionedCodes,
+      aliasPhrases: context.aliasPhrases,
     },
+    audit,
     usage: {
       promptTokens: data.usageMetadata?.promptTokenCount,
       responseTokens: data.usageMetadata?.candidatesTokenCount,

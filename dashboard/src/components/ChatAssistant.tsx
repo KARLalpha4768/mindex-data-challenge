@@ -28,6 +28,17 @@
  * because a submission arguing for numerical trustworthiness cannot afford an
  * unmarked machine-generated dollar figure.
  *
+ * Next to that badge sits the NUMERIC SELF-AUDIT (`numericAudit.ts`): every
+ * figure in the message, looked up in the material the message was grounded on.
+ * Live answers carry the server's audit against the retrieved context; scripted
+ * answers are audited here in the browser against the whole bundle, using the
+ * same code, so the badge means the same thing in both modes and the scripted
+ * set acts as a standing sanity check on the verifier.
+ *
+ * The panel also opens on the ten ranked interview questions rather than on an
+ * empty text box, because a reviewer who has to guess what the assistant can
+ * answer will ask it something it cannot, once, and then stop.
+ *
  * NOTHING SECRET REACHES THIS FILE. The browser bundle contains no key and no
  * upstream URL; it knows only the boolean returned by `GET /api/chat`.
  */
@@ -41,11 +52,16 @@ import {
   type ChatErrorKind,
   type ChatResponse,
   type ChatStatusResponse,
+  type NumericAudit,
 } from "@/lib/chatContract";
+import { auditAnswer, indexBundleNumbers } from "@/lib/numericAudit";
 import {
+  INTERVIEW_QUESTIONS,
   buildScriptedAnswers,
   findScriptedAnswer,
+  resolveInterviewAnswer,
   type CodeAnnotation,
+  type InterviewQuestion,
   type ScriptedAnswer,
 } from "@/lib/presets";
 import type { Bundle, DefectView } from "@/lib/types";
@@ -66,6 +82,13 @@ interface Message {
   talkingPoints?: string[];
   /** What the server retrieved, surfaced so retrieval is inspectable. */
   contextNote?: string;
+  /**
+   * Result of the numeric self-audit for this message. Live answers carry the
+   * server's audit (checked against the retrieved context); scripted answers
+   * are audited here in the browser against the whole bundle. Same code both
+   * sides — see `numericAudit.ts`.
+   */
+  audit?: NumericAudit;
   timestamp: string;
   isError?: boolean;
 }
@@ -98,6 +121,91 @@ const ERROR_COPY: Record<ChatErrorKind, string> = {
   empty_response: "the model returned nothing",
 };
 
+/**
+ * The numeric self-audit, rendered next to the source badge.
+ *
+ * Calm and factual on purpose. A passing state says what was checked, not
+ * "VERIFIED ✓"; a warning state names the figures and does not editorialise
+ * about them, because an unverified figure is not proof of a wrong figure — it
+ * is proof that this check could not confirm it, and those are different
+ * claims. Both states carry the limitation string verbatim, so the badge never
+ * asserts more than the check performs.
+ */
+function AuditNote({ audit }: { audit: NumericAudit }) {
+  const where =
+    audit.source === "retrieved-context" ? "the retrieved context" : "bundle.json";
+
+  if (audit.verdict === "no-figures") {
+    return (
+      <p className="text-2xs text-ink-faint">
+        <Badge tone="neutral">no figures</Badge>{" "}
+        <span className="italic">This answer states no checkable figure.</span>
+      </p>
+    );
+  }
+
+  const unverified = audit.figures.filter((f) => f.verdict === "unverified");
+
+  return (
+    <details className="rounded border border-line/60 bg-panel/60 p-2.5">
+      <summary className="cursor-pointer text-2xs">
+        {audit.verdict === "pass" ? (
+          <>
+            <Badge tone="ok" title="Post-response numeric check">
+              figures checked
+            </Badge>{" "}
+            <span className="text-ink-dim">
+              every figure in this answer appears in {where}
+              {audit.derived > 0
+                ? ` (${audit.derived} of ${audit.checked} as arithmetic over figures shown above)`
+                : ""}
+            </span>
+          </>
+        ) : (
+          <>
+            <Badge tone="warn" title="Post-response numeric check">
+              {unverified.length} figure{unverified.length === 1 ? "" : "s"} unverified
+            </Badge>{" "}
+            <span className="text-ink-dim">
+              not found in {where}: {unverified.map((f) => f.text).join(", ")}
+            </span>
+          </>
+        )}
+      </summary>
+
+      <div className="mt-2 space-y-2 text-2xs leading-relaxed text-ink-dim">
+        <p className="font-mono">
+          {audit.checked} checked · {audit.verified} present · {audit.derived} computed ·{" "}
+          {audit.unverified} not found · {audit.exemptCount} not applicable
+          {Object.keys(audit.exemptByKind).length > 0 && (
+            <>
+              {" "}
+              (
+              {Object.entries(audit.exemptByKind)
+                .map(([kind, n]) => `${n} ${kind}`)
+                .join(", ")}
+              )
+            </>
+          )}
+        </p>
+
+        {unverified.length > 0 && (
+          <ul className="list-inside list-disc space-y-1">
+            {unverified.map((f, i) => (
+              <li key={i}>
+                <span className="font-mono text-warn">{f.text}</span> — {f.excerpt}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <p className="italic">{audit.limitation}</p>
+        {audit.truncated && <p className="italic">Figure list truncated for payload size.</p>}
+      </div>
+    </details>
+  );
+}
+
 export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [inputQuery, setInputQuery] = React.useState("");
@@ -112,6 +220,16 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
    * cached copy of the numbers anywhere that could outlive the data.
    */
   const scripted = React.useMemo(() => buildScriptedAnswers(bundle), [bundle]);
+
+  /**
+   * Numeric index of the whole bundle, for auditing scripted answers.
+   *
+   * Scripted answers are assembled from all of `bundle.json`, not from a
+   * retrieved slice, so the honest provenance claim for them is "this figure is
+   * in the bundle" and that is what the badge says. Built once per bundle
+   * identity — i.e. once — because it walks a megabyte of JSON.
+   */
+  const bundleNumbers = React.useMemo(() => indexBundleNumbers(bundle), [bundle]);
 
   /** Defect codes that actually exist, so a deep link can never point nowhere. */
   const knownCodes = React.useMemo(
@@ -129,8 +247,12 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
         "Answers are grounded: the server retrieves the relevant slice of the pipeline's own " +
         "output bundle and the model is instructed to answer from that and nothing else. If the " +
         "context does not contain an answer it will say so rather than invent one.\n\n" +
-        "The preset chips below always return scripted answers assembled directly from the " +
-        "bundle — no model involved, and every figure read at render time.",
+        "Every answer is then checked: each figure in it is looked up in the material it was " +
+        "grounded on, and the result is shown under the answer. That check proves a figure is " +
+        "present — not that it was used correctly.\n\n" +
+        "Start with the ranked questions above. The collapsed bundle chips return scripted " +
+        "answers assembled directly from bundle.json — no model involved, every figure read at " +
+        "render time.",
       timestamp: now(),
     },
   ]);
@@ -188,6 +310,16 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
 
   const pushScripted = React.useCallback(
     (answer: ScriptedAnswer, note: string, isError = false) => {
+      // The same verifier the server runs on model output, run here on the
+      // scripted text. These answers are generated from the bundle, so this
+      // should pass trivially — which makes it a standing sanity check on the
+      // verifier itself: a warning on a scripted answer means either a
+      // hand-typed figure crept back into `presets.ts` or the checker is wrong.
+      const audit = auditAnswer(
+        [answer.answer, ...(answer.talkingPoints ?? [])].join("\n"),
+        bundleNumbers,
+      );
+
       setMessages((prev) => [
         ...prev.filter((m) => m.source !== "pending"),
         {
@@ -200,15 +332,16 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
           codeSnippet: answer.codeSnippet || undefined,
           codeAnnotations: answer.codeAnnotations?.length ? answer.codeAnnotations : undefined,
           talkingPoints: answer.talkingPoints,
+          audit,
           timestamp: now(),
           isError,
         },
       ]);
     },
-    [],
+    [bundleNumbers],
   );
 
-  /** Preset chips are always scripted — deterministic, free, and labelled as such. */
+  /** Bundle chips are always scripted — deterministic, free, and labelled as such. */
   const handlePresetSelect = (preset: ScriptedAnswer) => {
     setMessages((prev) => [
       ...prev,
@@ -236,12 +369,23 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
       .map((m) => ({ role: m.source === "user" ? ("user" as const) : ("model" as const), text: m.text }));
   }, [messages]);
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const question = inputQuery.trim();
+  /**
+   * Ask one question through the normal path.
+   *
+   * Extracted from the form handler so the ten interview chips can use exactly
+   * the same route a typed question does — live model when one is configured,
+   * scripted answer when not. A chip that behaved differently from typing its
+   * text would be a demo, not a feature.
+   *
+   * `offlineAnswer` lets a caller pin which scripted answer the offline path
+   * should use. The interview chips do that: free-text matching cannot connect
+   * "June 2026 shows a 98% revenue collapse" to a metric whose label shares no
+   * word with it.
+   */
+  const askQuestion = async (question: string, offlineAnswer?: ScriptedAnswer) => {
     if (!question || isSending) return;
+    const fallback = () => offlineAnswer ?? findScriptedAnswer(scripted, question);
 
-    setInputQuery("");
     const history = buildHistory();
 
     setMessages((prev) => [
@@ -252,7 +396,7 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
     // Offline: answer immediately from the bundle. No spinner, no round trip.
     if (mode !== "live") {
       pushScripted(
-        findScriptedAnswer(scripted, question),
+        fallback(),
         mode === "checking"
           ? "offline mode — scripted answer (still checking whether a live model is configured)"
           : "offline mode — scripted answer (no live model configured on this deployment)",
@@ -303,7 +447,13 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
               `${data.context.includedIds.join(", ")}` +
               (data.context.droppedIds.length
                 ? ` · dropped for budget: ${data.context.droppedIds.join(", ")}`
+                : "") +
+              (data.context.aliasPhrases?.length
+                ? ` · alias phrases matched: ${data.context.aliasPhrases.join(", ")}`
                 : ""),
+            // Optional on the wire: a server built against the earlier contract
+            // simply omits it, and the message renders without the badge.
+            audit: data.audit,
             timestamp: now(),
           },
         ]);
@@ -312,7 +462,7 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
         // answer, and is told exactly why it is not the live one.
         if (data.kind === "not_configured" || data.kind === "bundle_unavailable") setMode("offline");
         pushScripted(
-          findScriptedAnswer(scripted, question),
+          fallback(),
           `offline mode — scripted answer (${ERROR_COPY[data.kind] ?? "the live model was unavailable"})`,
           true,
         );
@@ -320,7 +470,7 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") return;
       pushScripted(
-        findScriptedAnswer(scripted, question),
+        fallback(),
         "offline mode — scripted answer (the request to /api/chat failed)",
         true,
       );
@@ -328,6 +478,20 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
       abortRef.current = null;
       setIsSending(false);
     }
+  };
+
+  const handleSend = (e: React.FormEvent) => {
+    e.preventDefault();
+    const question = inputQuery.trim();
+    if (!question || isSending) return;
+    setInputQuery("");
+    void askQuestion(question);
+  };
+
+  /** An interview chip asks its question through the same path as typing it. */
+  const handleInterviewSelect = (item: InterviewQuestion) => {
+    if (isSending) return;
+    void askQuestion(item.question, resolveInterviewAnswer(scripted, item));
   };
 
   /** Deep link into the Defect Explorer. Only fires for codes that exist. */
@@ -450,23 +614,75 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
             </div>
           )}
 
-          {/* Preset chips — one per defect class, one per metric, plus the run summary. */}
+          {/* The ten interview questions, ranked. Four visible, six behind a
+              disclosure: ten chips at once would push the transcript off the
+              screen, which is the thing a reviewer actually came to read. */}
           <div className="border-b border-line bg-panel/50 p-4">
             <p className="mb-2 text-2xs font-medium uppercase tracking-wider text-ink-faint">
-              Scripted answers, straight from the bundle:
+              The ten hardest questions about this pipeline, ranked
             </p>
-            <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
-              {scripted.map((p) => (
+            <div className="flex flex-wrap gap-1.5">
+              {INTERVIEW_QUESTIONS.slice(0, 4).map((item) => (
                 <button
-                  key={p.label}
+                  key={item.rank}
                   type="button"
-                  onClick={() => handlePresetSelect(p)}
-                  className="rounded border border-line bg-raised px-2.5 py-1 font-mono text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent"
+                  disabled={isSending}
+                  onClick={() => handleInterviewSelect(item)}
+                  title={item.question}
+                  className="rounded border border-accent/40 bg-accent/5 px-2.5 py-1 text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
                 >
-                  {p.label}
+                  <span className="mr-1.5 font-mono text-2xs text-accent">{item.rank}</span>
+                  {item.chip}
                 </button>
               ))}
             </div>
+
+            <details className="mt-2">
+              <summary className="cursor-pointer text-2xs text-ink-faint hover:text-accent">
+                six more ({INTERVIEW_QUESTIONS.length - 4})
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {INTERVIEW_QUESTIONS.slice(4).map((item) => (
+                  <button
+                    key={item.rank}
+                    type="button"
+                    disabled={isSending}
+                    onClick={() => handleInterviewSelect(item)}
+                    title={item.question}
+                    className="rounded border border-accent/40 bg-accent/5 px-2.5 py-1 text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                  >
+                    <span className="mr-1.5 font-mono text-2xs text-accent">{item.rank}</span>
+                    {item.chip}
+                  </button>
+                ))}
+              </div>
+            </details>
+
+            <p className="mt-2 text-2xs text-ink-faint">
+              These are asked through the normal path: the live model when one is configured,
+              the scripted bundle answer when not.
+            </p>
+
+            {/* Bundle chips: one per defect class, one per metric, plus the run
+                summary. Collapsed by default — twenty-four of them above the
+                transcript was the old layout, and it buried everything else. */}
+            <details className="mt-3 border-t border-line/60 pt-2.5">
+              <summary className="cursor-pointer text-2xs font-medium uppercase tracking-wider text-ink-faint hover:text-accent">
+                or jump straight to a scripted answer ({scripted.length})
+              </summary>
+              <div className="mt-2 flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+                {scripted.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => handlePresetSelect(p)}
+                    className="rounded border border-line bg-raised px-2.5 py-1 font-mono text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </details>
           </div>
 
           {/* Transcript */}
@@ -505,6 +721,11 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
                   {m.sourceNote && (
                     <p className="text-2xs italic text-ink-faint">{m.sourceNote}</p>
                   )}
+
+                  {/* Numeric self-audit, immediately under the provenance line:
+                      where the text came from, and whether its figures are in
+                      the material it came from, are the same question. */}
+                  {m.audit && <AuditNote audit={m.audit} />}
 
                   {m.source === "pending" ? (
                     <p className="flex items-center gap-2 text-sm text-ink-dim">

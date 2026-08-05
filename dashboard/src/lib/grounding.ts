@@ -107,6 +107,22 @@ export interface ReconciliationFacts {
   netRevenue: number | null;
   lineLevelDelta: number | null;
   aggregateDelta: number | null;
+  /**
+   * The superseded `reconciliation_delta` column.
+   *
+   * The pipeline replaced it with the two independent deltas above, because the
+   * original expression — SUM(net WHERE is_return=0) + SUM(net WHERE is_return=1)
+   * − SUM(net) — is identically zero for any data: `is_return` partitions the
+   * rows, so it is an algebraic tautology that reported $0.00 even after $79k of
+   * revenue was deliberately injected into a copy of the warehouse.
+   *
+   * It is still read here, and kept as its own field rather than folded into
+   * either replacement, so that a bundle generated before that change still
+   * renders. Serving one control under another's name would tell the model — and
+   * then the reviewer — that a check ran which did not. A missing figure stays
+   * missing; a present one is named for what it is.
+   */
+  reconciliationDelta: number | null;
 }
 
 export interface RunFacts {
@@ -202,6 +218,7 @@ export function buildRunFacts(bundle: Bundle): RunFacts {
       netRevenue: num(reconRow.net_revenue),
       lineLevelDelta: num(reconRow.line_level_delta),
       aggregateDelta: num(reconRow.aggregate_delta),
+      reconciliationDelta: num(reconRow.reconciliation_delta),
     },
     detected,
     actions,
@@ -268,6 +285,7 @@ export function renderRunPreamble(facts: RunFacts): string {
     `  net_revenue                 = ${money(facts.recon.netRevenue)}`,
     `  line_level_delta            = ${money(facts.recon.lineLevelDelta)}`,
     `  aggregate_delta             = ${money(facts.recon.aggregateDelta)}`,
+    `  reconciliation_delta        = ${money(facts.recon.reconciliationDelta)}`,
     "",
     `defect codes in catalog: ${facts.defectCodes.join(", ") || "none"}`,
     `metric ids in bundle: ${facts.metricIds.join(", ") || "none"}`,
@@ -317,6 +335,349 @@ export function tokenize(text: string): string[] {
 export function extractDefectCodes(question: string): string[] {
   const found = question.match(CODE_PATTERN) ?? [];
   return Array.from(new Set(found.map((c) => c.toUpperCase())));
+}
+
+/* ────────────────────────────────────────────────────────────────────────── *
+ * 3b. The alias table
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * Term overlap scores the reviewer's words against the catalog's words, so it
+ * only works when the two vocabularies coincide. They often do not. "Why don't
+ * the numbers add up?" is the natural way to ask about TX-03, and it shares not
+ * one content word with a dossier that says "reconciliation", "silent discount"
+ * and "extended_amount". The retrieval then quietly returns something else, the
+ * model answers honestly from the wrong context, and the reviewer concludes the
+ * assistant does not know its own pipeline.
+ *
+ * The fix is a hand-authored table, not a cleverer scorer. Fuzzy matching,
+ * stemming and embeddings would all "handle" this class of miss statistically
+ * and none of them would be reviewable: you cannot read a similarity threshold
+ * and tell whether "guest checkout" reaches TX-06. You can read this table and
+ * tell. Every row is a claim someone made on purpose, it is diffable, and the
+ * test suite asserts each of the ten interview questions retrieves what its
+ * answer actually needs.
+ *
+ * THE WEIGHT, AND WHY IT IS THIS NUMBER
+ * -------------------------------------
+ * An alias hit adds `ALIAS_WEIGHT = 12` to a target's score. The comparison
+ * points, from `scoreFields` below:
+ *
+ *   • one term matching a defect title  = 6      (title weight)
+ *   • one term matching detection/decision = 3
+ *   • an explicitly typed defect code   = bypasses scoring entirely; the code
+ *     is retrieved at priority 900 with full prose and source windows
+ *
+ * So 12 makes an alias hit worth exactly two title-word matches. That is the
+ * intent: an alias phrase is hand-certified evidence that this phrasing MEANS
+ * this defect, which is worth more than any single incidental word overlap
+ * ("store", "price", "date" each appear in half the catalog) — but less than a
+ * question that genuinely restates three or more words of a dossier's title,
+ * and far less than naming the code outright. A larger weight would let one
+ * table row override real textual evidence; a smaller one would leave the
+ * aliases decorative, since a two-word overlap could out-score them.
+ *
+ * An alias hit also lifts a target from zero to non-zero, which matters
+ * independently of the weight: `selectContext` drops candidates scoring zero,
+ * so before this table a phrasing miss meant the defect was not merely ranked
+ * low, it was not a candidate at all.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** Score added to each target of a matched alias rule. See the comment above. */
+export const ALIAS_WEIGHT = 12;
+
+export interface AliasRule {
+  /**
+   * Natural phrasings, lowercase. Matched against the whitespace-normalised
+   * question as whole-word substrings, so "add up" matches "don't add up" and
+   * "adds up" (via the separate "adds up" entry) but never "added upstream".
+   */
+  phrases: string[];
+  /** Defect codes this phrasing is about. */
+  codes?: string[];
+  /** Metric ids this phrasing is about. */
+  metrics?: string[];
+  /** Why this row exists. Read by a human, not by the code. */
+  note: string;
+}
+
+/**
+ * The table. Grouped by target so a reviewer can check coverage class by class.
+ *
+ * Deliberately conservative: a phrase belongs here only if it is unambiguous
+ * about which defect or metric it names. Ambiguous phrasings ("the duplicates",
+ * "the nulls") are left to term overlap, which will at least surface several
+ * candidates rather than confidently pick one.
+ */
+export const ALIAS_RULES: readonly AliasRule[] = [
+  /* ── stores ─────────────────────────────────────────────────────────────── */
+  {
+    phrases: [
+      "zip", "zip code", "zipcode", "postal code", "postcode", "leading zero",
+      "lost zero", "four digit", "4 digit", "0938", "00938", "padded", "padding",
+      "zfill", "suspect zip",
+    ],
+    codes: ["ST-01"],
+    note: "A dropped leading zero is described in the catalog as a malformed ZIP; reviewers say 'postal code' and 'leading zero'.",
+  },
+  {
+    phrases: [
+      "survivorship", "which row wins", "row wins", "winning row", "keep first",
+      "keep='first'", "same store twice", "store twice", "conflicting attributes",
+      "near duplicate", "near-duplicate", "s007", "rochester", "golden record",
+      "deduplicate stores", "duplicate store",
+    ],
+    codes: ["ST-02"],
+    note: "ST-02 is the deterministic-survivorship decision; 'which row wins' is how it is asked and appears nowhere in the dossier text.",
+  },
+  {
+    phrases: [
+      "region", "blank region", "missing region", "null region", "wrong region",
+      "impute", "imputed", "imputation", "oregon", "west", "s013", "s014",
+      "invent a category", "state to region",
+    ],
+    codes: ["ST-03"],
+    metrics: ["aov_by_region"],
+    note: "Region imputation and the region-grouped AOV metric are the same conversation: an invented fifth region silently splits that metric.",
+  },
+
+  /* ── products ───────────────────────────────────────────────────────────── */
+  {
+    phrases: ["byte identical", "byte-identical", "identical row", "exact copy of a product", "p012"],
+    codes: ["PR-01"],
+    note: "PR-01 is the safe-to-drop true duplicate; it is only ever asked about in contrast with PR-02.",
+  },
+  {
+    phrases: [
+      "price change", "price changed", "price conflict", "two prices", "different price",
+      "duplicate product", "product twice", "p005", "150.11", "141.61",
+      "catalog price", "list price differs", "repricing", "reprice",
+    ],
+    codes: ["PR-02", "PR-01"],
+    note: "The headline product question ('P005 appears twice — duplicate or price change?') needs both classes to contrast them.",
+  },
+  {
+    phrases: ["null category", "missing category", "uncategorised", "uncategorized", "unknown category"],
+    codes: ["PR-03"],
+    note: "PR-03; 'uncategorised' never appears in the dossier text.",
+  },
+  {
+    phrases: ["zero price", "free product", "price of zero", "0.00 price", "priced at zero"],
+    codes: ["PR-04"],
+    note: "PR-04.",
+  },
+
+  /* ── transactions ───────────────────────────────────────────────────────── */
+  {
+    phrases: [
+      "date format", "date formats", "three formats", "mixed formats", "parsed wrong",
+      "parse wrong", "misparse", "mis-parse", "parsed correctly", "silently parsing",
+      "dd-mm", "mm/dd", "ambiguous date", "day month year", "month day year", "iso date",
+    ],
+    codes: ["TX-01"],
+    note: "TX-01. A misparse cannot be caught by row counts, so this question is always about the parsing ladder rather than about counts.",
+  },
+  {
+    phrases: [
+      "currency string", "dollar sign", "stored as text", "stored as string",
+      "amount as string", "comma in the amount", "1,234.56",
+    ],
+    codes: ["TX-02"],
+    note: "TX-02.",
+  },
+  {
+    phrases: [
+      "add up", "adds up", "added up", "doesn't add up", "does not add up", "don't add up",
+      "math is wrong", "maths is wrong", "numbers are wrong", "mismatch", "does not match",
+      "doesn't match", "silent discount", "discount", "discounts", "recompute", "recomputed",
+      "recomputing", "quantity times price", "quantity x unit_price", "quantity × unit_price",
+      "total_amount", "internally consistent", "overstate", "overstated", "overstatement",
+      "961.48", "tie out", "tie-out", "reconcile", "reconciles",
+    ],
+    codes: ["TX-03"],
+    metrics: ["revenue_reconciliation"],
+    note: "The central trade-off of the submission. 'Why don't the numbers add up' shares no content word with the dossier, which is the miss that motivated this whole table.",
+  },
+  {
+    phrases: [
+      "orphan", "orphans", "orphaned", "missing store", "store that doesn't exist",
+      "store does not exist", "unknown store", "referential integrity", "foreign key",
+      "fk violation", "dangling reference",
+    ],
+    codes: ["TX-04", "TX-05"],
+    note: "The two orphan classes are asked about together ('what about rows pointing at nothing?') and are meaningless apart.",
+  },
+  {
+    phrases: [
+      "missing product", "product that doesn't exist", "product does not exist", "unknown product",
+    ],
+    codes: ["TX-05", "TX-04"],
+    note: "Same pair, product-first phrasing.",
+  },
+  {
+    phrases: [
+      "guest", "guest checkout", "anonymous", "anonymous customer", "no customer",
+      "missing customer", "null customer", "without an account", "unknown customer",
+      "who bought it",
+    ],
+    codes: ["TX-06"],
+    metrics: ["top_customers_lifetime"],
+    note: "TX-06 and the leaderboard that excludes GUEST are the same decision seen from two ends.",
+  },
+  {
+    phrases: ["zero quantity", "zero value", "empty transaction", "nothing was sold", "quantity of zero", "0 quantity"],
+    codes: ["TX-07"],
+    note: "TX-07.",
+  },
+  {
+    phrases: [
+      "future date", "future dated", "dated in the future", "clock drift", "clock skew",
+      "after the reference date", "as_of_date", "as of date", "datetime.now", "wall clock",
+      "reference date", "frozen date", "pinned date",
+    ],
+    codes: ["TX-08"],
+    note: "TX-08 and the pinned AS_OF_DATE reproducibility argument.",
+  },
+  {
+    phrases: [
+      "exact duplicate", "duplicate transaction", "duplicated row", "same row twice",
+      "double counted", "double-counted", "double counting",
+    ],
+    codes: ["TX-09"],
+    note: "TX-09.",
+  },
+  {
+    phrases: [
+      "return", "returns", "returned", "refund", "refunds", "refunded",
+      "negative quantity", "negative amount", "return rate", "returns rate",
+      "sent back", "give back",
+    ],
+    codes: ["TX-10"],
+    metrics: ["return_rate_by_store"],
+    note: "TX-10 and the metric it feeds. 'Refund' is the ordinary word and appears nowhere in the catalog.",
+  },
+
+  /* ── row budget: the question that needs five classes at once ───────────── */
+  {
+    phrases: [
+      "account for all", "where did the rows go", "rows go", "row budget", "missing rows",
+      "dropped rows", "quarantine", "quarantined", "lineage", "disposition",
+      "505", "474", "reconcile the row count", "row count",
+    ],
+    codes: ["TX-04", "TX-05", "TX-07", "TX-08", "TX-09"],
+    note: "'Account for all 505 transaction rows' is answerable only by naming every disposition, so all five quarantine/drop classes are retrieved together. This is the row that justifies maxDefects being 6 rather than 4.",
+  },
+
+  /* ── metrics ────────────────────────────────────────────────────────────── */
+  {
+    phrases: [
+      "best store", "best stores", "top store", "top stores", "busiest store",
+      "last 30 days", "recent 30", "trailing 30", "last month of data",
+    ],
+    metrics: ["top_stores_recent_30d"],
+    note: "top_stores_recent_30d.",
+  },
+  {
+    phrases: [
+      "month over month", "month-over-month", "mom growth", "growth by category",
+      "revenue collapse", "collapse", "partial month", "one day of data", "days_with_data",
+      "june", "seasonality", "trend by category", "98%", "403",
+    ],
+    metrics: ["mom_growth_by_category"],
+    note: "The June cliff is an extract-boundary artefact; every phrasing of that question ('what happened to the business?') misses the metric's own vocabulary.",
+  },
+  {
+    phrases: [
+      "denominator", "denominators", "which stores breach", "exceed the threshold",
+      "exceeds the threshold", "alert threshold", "10% threshold", "flagged stores",
+      "s006", "s015", "unit based", "transaction based",
+    ],
+    metrics: ["return_rate_by_store"],
+    codes: ["TX-10"],
+    note: "The two-denominator question. 'Denominator' appears in the definition note but nowhere in the defect catalog.",
+  },
+  {
+    phrases: [
+      "average order", "average order value", "aov", "average transaction",
+      "basket size", "spend per transaction", "by region",
+    ],
+    metrics: ["aov_by_region"],
+    note: "aov_by_region. 'AOV' and 'basket size' are the industry words for it.",
+  },
+  {
+    phrases: [
+      "best customer", "best customers", "top customer", "top customers",
+      "biggest spender", "biggest spenders", "top spender", "top spenders",
+      "lifetime value", "lifetime spend", "ltv", "loyalty", "whale", "leaderboard",
+    ],
+    metrics: ["top_customers_lifetime"],
+    note: "top_customers_lifetime.",
+  },
+  {
+    phrases: [
+      "net revenue", "gross revenue", "total revenue", "revenue reconciliation",
+      "line_level_delta", "line level delta", "aggregate_delta", "aggregate delta",
+      "delta", "control total", "cannot fail", "can't fail", "tautology",
+      "uniform rescaling", "rescaling", "what can it not detect", "false confidence",
+    ],
+    metrics: ["revenue_reconciliation"],
+    note: "The reconciliation metric and the 'what can this control NOT detect' question, which is about the metric's limits rather than its value.",
+  },
+];
+
+/**
+ * Normalise a question for alias matching.
+ *
+ * Everything that is not a letter, digit or underscore becomes a space, and the
+ * result is padded with spaces at both ends. Matching a phrase is then a plain
+ * `indexOf(" phrase ")`, which gives whole-word semantics without a regex per
+ * phrase — and, more importantly, without the punctuation sensitivity that
+ * would make "doesn't add up" and "doesn t add up" different questions. Note
+ * that the apostrophe in the table's phrases is normalised the same way on both
+ * sides, so "don't" in the table and "don’t" typed with a smart quote both
+ * reduce to "don t".
+ */
+export function normaliseForAlias(question: string): string {
+  return ` ${question.toLowerCase().replace(/[^a-z0-9_]+/g, " ").trim()} `;
+}
+
+export interface AliasHits {
+  /** defect code -> score contributed by alias rules. */
+  codes: Map<string, number>;
+  /** metric id -> score contributed by alias rules. */
+  metrics: Map<string, number>;
+  /** The phrases that fired, for the transparency panel and for tests. */
+  phrases: string[];
+}
+
+/**
+ * Which aliases fire for this question.
+ *
+ * A rule contributes `ALIAS_WEIGHT` to each of its targets, once per rule, no
+ * matter how many of its phrases matched. Counting phrases would let a rule
+ * with many near-synonyms ("return", "returns", "returned", "refund") outweigh
+ * a rule with one precise phrase, which is an artefact of how the table was
+ * written rather than a fact about the question.
+ */
+export function matchAliases(question: string): AliasHits {
+  const haystack = normaliseForAlias(question);
+  const codes = new Map<string, number>();
+  const metrics = new Map<string, number>();
+  const phrases: string[] = [];
+
+  for (const rule of ALIAS_RULES) {
+    const matched = rule.phrases.filter((p) => haystack.includes(normaliseForAlias(p)));
+    if (matched.length === 0) continue;
+    phrases.push(...matched);
+    for (const code of rule.codes ?? []) {
+      codes.set(code, (codes.get(code) ?? 0) + ALIAS_WEIGHT);
+    }
+    for (const id of rule.metrics ?? []) {
+      metrics.set(id, (metrics.get(id) ?? 0) + ALIAS_WEIGHT);
+    }
+  }
+
+  return { codes, metrics, phrases: Array.from(new Set(phrases)) };
 }
 
 /**
@@ -544,6 +905,11 @@ export interface SelectedContext {
   droppedIds: string[];
   /** Defect codes named literally in the question. */
   mentionedCodes: string[];
+  /**
+   * Alias phrases from `ALIAS_RULES` that fired for this question. Surfaced so
+   * that "why did it retrieve THAT?" has an answer a reviewer can read.
+   */
+  aliasPhrases: string[];
 }
 
 export interface SelectContextOptions {
@@ -566,6 +932,10 @@ export interface SelectContextOptions {
  *
  * Ties break on relevance score, then on catalog order (so output is stable for
  * identical inputs — a non-deterministic prompt builder is untestable).
+ *
+ * Scoring is term overlap PLUS the hand-authored alias table (see section 3b),
+ * which exists because ordinary phrasing frequently shares no vocabulary at all
+ * with the dossier it is asking about.
  */
 export function selectContext(
   bundle: Bundle,
@@ -573,13 +943,22 @@ export function selectContext(
   options: SelectContextOptions = {},
 ): SelectedContext {
   const budget = options.budgetTokens ?? DEFAULT_CONTEXT_TOKEN_BUDGET;
-  const maxDefects = options.maxDefects ?? 4;
+  /**
+   * Six, not four. "Account for all 505 transaction rows" is answerable only by
+   * naming five disposition classes at once (TX-04, TX-05, TX-07, TX-08,
+   * TX-09), and a cap of four made that question unanswerable however good the
+   * ranking was. Six summarised dossiers cost roughly 3,000 of the 9,000-token
+   * budget, which still leaves room for the preamble, two metrics with SQL and
+   * a source window.
+   */
+  const maxDefects = options.maxDefects ?? 6;
   const maxMetrics = options.maxMetrics ?? 2;
 
   const facts = buildRunFacts(bundle);
   const terms = tokenize(question);
   const mentioned = extractDefectCodes(question);
   const mentionedSet = new Set(mentioned);
+  const aliases = matchAliases(question);
 
   const specs = catalogEntries(bundle);
   const auditByCode = new Map(auditRecords(bundle).map((a) => [a.code, a]));
@@ -615,16 +994,17 @@ export function selectContext(
     .map((spec, index) => ({
       spec,
       index,
-      score: scoreFields(terms, [
-        [spec.title, 6],
-        [spec.code, 10],
-        [spec.dataset, 2],
-        [spec.detection, 3],
-        [spec.decision, 3],
-        [spec.rationale, 2],
-        [spec.source_ref, 2],
-        [auditByCode.get(spec.code)?.notes ?? "", 2],
-      ]),
+      score:
+        scoreFields(terms, [
+          [spec.title, 6],
+          [spec.code, 10],
+          [spec.dataset, 2],
+          [spec.detection, 3],
+          [spec.decision, 3],
+          [spec.rationale, 2],
+          [spec.source_ref, 2],
+          [auditByCode.get(spec.code)?.notes ?? "", 2],
+        ]) + (aliases.codes.get(spec.code) ?? 0),
     }))
     .filter((c) => c.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
@@ -654,14 +1034,15 @@ export function selectContext(
       id,
       metric,
       index,
-      score: scoreFields(terms, [
-        [id.replace(/_/g, " "), 8],
-        [metric.title ?? "", 6],
-        [metric.description ?? "", 3],
-        [metric.definition_note ?? "", 3],
-        [Object.keys(metric.rows?.[0] ?? {}).join(" ").replace(/_/g, " "), 4],
-        [metric.sql_ref ?? "", 2],
-      ]),
+      score:
+        scoreFields(terms, [
+          [id.replace(/_/g, " "), 8],
+          [metric.title ?? "", 6],
+          [metric.description ?? "", 3],
+          [metric.definition_note ?? "", 3],
+          [Object.keys(metric.rows?.[0] ?? {}).join(" ").replace(/_/g, " "), 4],
+          [metric.sql_ref ?? "", 2],
+        ]) + (aliases.metrics.get(id) ?? 0),
     }))
     .filter((c) => c.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
@@ -710,6 +1091,7 @@ export function selectContext(
     includedIds: chosen.map((b) => b.id),
     droppedIds: dropped,
     mentionedCodes: mentioned,
+    aliasPhrases: aliases.phrases,
   };
 }
 

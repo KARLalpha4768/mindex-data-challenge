@@ -124,11 +124,28 @@ export function buildDefectViews(bundle: Bundle): DefectView[] {
  */
 export function discountImpact(bundle: Bundle): number | null {
   const recon = bundle.analytics?.metrics?.revenue_reconciliation;
-  if (!recon) return null;
-  const row = recon.rows.find((r) =>
+  if (!recon || !recon.rows.length) return null;
+
+  // The metric returns exactly ONE row, wide rather than tall: one column per
+  // reconciliation component (gross_list_value, discount_total, returns_value,
+  // net_revenue, and the two deltas).
+  //
+  // This function previously scanned for a row whose `line_item` contained
+  // "discount" and read its `amount`. No such columns exist, so it returned
+  // null on every run and the Overview permanently displayed "—" beside the
+  // words "revenue_reconciliation metric absent from the bundle" — while the
+  // metric was present and correct the whole time. A headline figure silently
+  // reading as unavailable is precisely the failure mode this dashboard exists
+  // to argue against, so it is worth naming here rather than quietly fixing.
+  const row = recon.rows[0];
+  const discount = Number(row.discount_total);
+  if (Number.isFinite(discount)) return Math.abs(discount);
+
+  // Tolerate the older tall shape, so a previously generated bundle still
+  // renders rather than regressing to the empty state.
+  const legacy = recon.rows.find((r) =>
     String(r.line_item ?? "").toLowerCase().includes("discount"),
   );
-  if (!row) return null;
-  const amount = Number(row.amount);
-  return Number.isFinite(amount) ? Math.abs(amount) : null;
+  const legacyAmount = Number(legacy?.amount);
+  return Number.isFinite(legacyAmount) ? Math.abs(legacyAmount) : null;
 }

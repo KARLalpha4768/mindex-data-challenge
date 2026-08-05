@@ -57,6 +57,72 @@ export interface ChatContextSummary {
   includedIds: string[];
   droppedIds: string[];
   mentionedCodes: string[];
+  /**
+   * Alias phrases (from `grounding.ts`'s hand-authored table) that fired for
+   * this question and pulled a defect or metric into the context. Optional so
+   * a client built against the earlier contract is unaffected.
+   */
+  aliasPhrases?: string[];
+}
+
+/* ── Numeric self-audit (added after v1; every field below is additive) ────
+ *
+ * The server verifies the model's own arithmetic honesty before replying: every
+ * numeric literal in the answer is checked against the context that was
+ * retrieved for it. `ChatSuccess.audit` is OPTIONAL precisely so that a client
+ * built against the earlier contract keeps working — it will ignore a field it
+ * does not know about, and the answer text is unchanged either way.
+ *
+ * The implementation and the exemption rules live in `numericAudit.ts`; only
+ * the wire shape is declared here.
+ */
+
+/** Per-figure outcome. `derived` is a weaker guarantee than `verified`, on purpose. */
+export type FigureVerdict =
+  /** The figure appears in the grounding material. */
+  | "verified"
+  /** Not present, but equals simple arithmetic over figures this answer showed. */
+  | "derived"
+  /** Neither. This is the state the badge warns about. */
+  | "unverified";
+
+export interface FigureCheck {
+  /** The literal as written in the answer, e.g. "$158,044.29". */
+  text: string;
+  /** Its absolute magnitude. Sign is not part of the comparison. */
+  value: number;
+  verdict: FigureVerdict;
+  /** Short human explanation, e.g. "= 158044.29 + 961.48". */
+  note: string;
+  /** Surrounding answer text, so a reviewer can see the claim, not just the number. */
+  excerpt: string;
+}
+
+/** What the answer was checked against. Drives the UI copy; never inferred. */
+export type NumericAuditSource =
+  /** The slice of the bundle the server retrieved for this question. */
+  | "retrieved-context"
+  /** The whole of bundle.json — used for the scripted offline answers. */
+  | "bundle";
+
+export interface NumericAudit {
+  /** `no-figures` when the answer states no checkable figure at all. */
+  verdict: "pass" | "warn" | "no-figures";
+  source: NumericAuditSource;
+  /** Figures actually checked (exempt ones are excluded from this count). */
+  checked: number;
+  verified: number;
+  derived: number;
+  unverified: number;
+  /** Literals skipped as non-claims: dates, ids, code refs, small cardinals. */
+  exemptCount: number;
+  exemptByKind: Record<string, number>;
+  /** Unverified first, then derived, then verified. Capped for payload size. */
+  figures: FigureCheck[];
+  /** True when `figures` was capped and does not list every checked figure. */
+  truncated: boolean;
+  /** What the verdict does NOT prove. Rendered verbatim in the UI. */
+  limitation: string;
 }
 
 export interface ChatSuccess {
@@ -66,6 +132,11 @@ export interface ChatSuccess {
   context: ChatContextSummary;
   /** Token usage as reported by the upstream, when it reports any. */
   usage?: { promptTokens?: number; responseTokens?: number; totalTokens?: number };
+  /**
+   * Result of the post-response numeric check. Optional for backward
+   * compatibility: an older client ignores it and renders the answer as before.
+   */
+  audit?: NumericAudit;
 }
 
 export interface ChatFailure {

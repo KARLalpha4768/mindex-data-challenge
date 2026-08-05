@@ -34,6 +34,10 @@ export default function Overview({
   const cleanTotal = Object.values(cleanCounts).reduce((a, b) => a + b, 0);
   const factSalesCount = bundle.run.row_counts.warehouse?.fact_sales ?? cleanCounts.transactions ?? 474;
   const quarantinedCount = bundle.run.row_counts.quarantined ?? 38;
+  // WHY count from the bundle rather than write "5" or "6": the metric registry
+  // has changed size twice during this project, and each time a hardcoded
+  // number in this file survived the change and started lying.
+  const metricCount = Object.keys(bundle.analytics?.metrics ?? {}).length;
 
   const mismatches = defects.filter((d) => d.coverage !== "match");
   const bySeverity = SEVERITY_ORDER.map((sev) => ({
@@ -66,7 +70,11 @@ export default function Overview({
             <Badge tone="warn">{formatInt(quarantinedCount)} Audited Quarantine Records</Badge>
             <Badge tone="ok">0 FK Violations</Badge>
             <Badge tone="accent">$0.00 Revenue Delta</Badge>
-            <Badge tone="ok">27/27 Pytest Tests Passed</Badge>
+            {/* Derived, not typed. A hardcoded test count here read "27/27"
+                long after the suite had grown to 87, which is the same
+                stale-figure failure this dashboard is built to expose. The
+                bundle is the only source permitted to state a number. */}
+            <Badge tone="ok">{formatInt(metricCount)} SQL Metrics Executed</Badge>
           </div>
         </div>
       </section>
@@ -114,7 +122,7 @@ export default function Overview({
               <span>📊</span> Code Verification & Query Success
             </h4>
             <p className="text-ink-dim">
-              Achieved <strong>100% test suite pass rate (27/27 pytest tests)</strong>, 17/17 defect coverage verification proof (<code className="font-mono text-ink">PASS</code>), a <strong>$0.00 revenue reconciliation delta</strong>, and executed 5 core SQL business intelligence queries against SQLite with index-optimized accuracy.
+              Achieved <strong>17/17 defect coverage</strong> with every detected count matching the seeded expectation (<code className="font-mono text-ink">PASS</code>), a <strong>$0.00 revenue reconciliation delta</strong> proven at both line and aggregate level, and executed {formatInt(metricCount)} SQL business intelligence metrics against SQLite. The pytest suite and the release verifier run in the repository, where their counts are asserted rather than asserted here.
             </p>
           </div>
         </div>

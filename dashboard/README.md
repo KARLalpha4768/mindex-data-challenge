@@ -169,7 +169,14 @@ whose hand-written figures had gone stale (it quoted `$170,816.34` for a number 
 | Mode | When | What produces the text |
 |---|---|---|
 | **Live** | `GEMINI_API_KEY` is set and the server can read the bundle | `gemini-3.6-flash`, answering from a retrieved slice of the bundle |
-| **Offline** | no key, the API call fails, or you clicked a preset chip | Scripted answers assembled from `bundle.json` at render time |
+| **Offline** | no key, the API call fails, or you clicked a bundle chip | Scripted answers assembled from `bundle.json` at render time |
+
+The panel opens on **the ten hardest questions about this pipeline**, ranked, taken from
+`INTERVIEW_QA.md` — four visible, six behind a disclosure, so a reviewer does not have to
+guess what the assistant can do. Those chips ask their question through the normal path
+(live model when configured, scripted answer when not); the collapsed bundle chips below
+them are the always-scripted shortcuts. Free-text questions and `TX-03`-style deep links
+work exactly as before.
 
 Every assistant message carries a source badge, and offline answers say
 *"offline mode — scripted answer"* with the reason in parentheses. There is no state in
@@ -197,6 +204,68 @@ Retrieval is term-overlap with field weighting, not embeddings. The corpus is 25
 whose text already contains the reviewer's vocabulary almost verbatim; a vector index would
 add a build step and a threshold to tune in exchange for nothing measurable at this scale.
 It is deterministic, which is also what makes it testable offline.
+
+### Alias expansion
+
+Term overlap only works when the reviewer's vocabulary and the catalog's coincide, and
+often they do not. *"How do you handle refunds?"* shares no content word with a dossier
+that says "return transactions with negative quantity and amount", and before the alias
+table that question retrieved **nothing but the preamble**. *"Why don't the numbers add
+up?"* did retrieve TX-03, but ranked fourth, and the one source window in the context went
+to the wrong defect.
+
+`ALIAS_RULES` in `src/lib/grounding.ts` is a hand-authored table from natural phrasings to
+defect codes and metric ids — *postal code / leading zero* → `ST-01`, *doesn't add up /
+silent discount* → `TX-03` + `revenue_reconciliation`, *guest checkout / anonymous* →
+`TX-06` + `top_customers_lifetime`, and so on. A table rather than a cleverer scorer
+because a table is reviewable: you can read it and tell whether "guest checkout" reaches
+TX-06, which is not true of a similarity threshold.
+
+A hit adds **12** to the target's score — worth exactly two title-word matches, more than
+any single incidental word overlap and less than an explicitly typed defect code, which
+bypasses scoring entirely. The reasoning is argued in full above the table. The phrases
+that fired are reported to the client and shown under "Grounding context used", so a
+surprising retrieval can always be traced to the row that caused it.
+
+The test suite asserts that each of the ten questions in `INTERVIEW_QA.md` retrieves the
+defect classes and metrics its answer actually cites. All ten do.
+
+### The numeric self-audit
+
+The system instruction forbids stating a figure that is not in the context. Nothing
+verified that, which made it a request rather than a control — and for a submission whose
+argument is numerical trustworthiness, one invented dollar figure in front of a reviewer
+discredits every figure that is right.
+
+`src/lib/numericAudit.ts` checks every answer before it is rendered. It extracts each
+numeric literal, normalises it (currency symbols, thousands separators, percent signs,
+trailing zeros — `$158,044.29`, `158044.29` and `158,044.3` are one figure), and looks it
+up in the material the answer was grounded on: the retrieved context for a live answer,
+`bundle.json` for a scripted one. The badge says which.
+
+A figure is **not** flagged when it is (1) not a claim about the data — a defect code, an
+entity id, a date, a `file.py:214` citation; (2) a bare integer ≤ 12, which in English is
+enumeration rather than measurement (`$5` and `5%` are still checked — a unit means a
+measurement); (3) present in the context; or (4) equal to `a+b`, `a−b`, `a×b`, `a÷b` or
+`100·a÷b` over figures **this answer itself shows and that already passed (3)**. Restricting
+the operand pool to the answer's own verified figures — rather than to the whole context —
+is what keeps derivation from becoming a loophole: hundreds of context numbers have enough
+pairwise sums to excuse almost anything, while an answer has a handful and a reviewer can
+check them by eye. Derived figures are reported as their own category, because they are a
+weaker guarantee than "present".
+
+What the badge claims is exactly what the check performs, and that limitation ships with
+every result: **it proves a figure appears in the grounding material, not that it was used
+correctly.** "Net revenue is $9,952.03" passes — that is the returns value. Pure,
+deterministic, no network, ~0.1 ms per answer, and unit-tested both ways: a plausible but
+absent figure must be flagged, and legitimate answers must not be.
+
+Measured on the ten model answers in `INTERVIEW_QA.md`, audited against the context that
+would really have been retrieved for each: **seven pass, three warn — and all three
+warnings are correct.** They are `504` (a lineage-CSV row index), `14626` (the real ZIP for
+Greece, NY) and `$79,000` (from a mutation-testing experiment). Every one of those is a
+true fact the assistant could not have sourced from its grounding, which is precisely what
+the check is for.
 
 **The context budget is 9,000 tokens** (~36 KB, ~3.5% of the bundle) — see
 `DEFAULT_CONTEXT_TOKEN_BUDGET` in `src/lib/grounding.ts`, where the choice is argued in
@@ -247,13 +316,26 @@ accepting that trade-off is in `src/lib/rateLimit.ts`.
 npm test
 ```
 
-70 assertions covering the context selector (determinism, budget enforcement, that it
-quotes live figures and that none of the three stale figures can reappear), the scripted
-answers, and the route handler against a **mocked** upstream: success, upstream non-2xx,
-network failure, safety block, empty candidate, missing key, oversized body, malformed
-JSON, history cap and the rate limiter. Two of those assertions specifically check that a
-key never escapes — one feeds an upstream error body containing the key, one throws a
-network error containing it.
+161 assertions covering the context selector (determinism, budget enforcement, that it
+quotes live figures and that none of the three stale figures can reappear), the alias table
+(every ordinary phrasing lands on the right defect; all ten interview questions retrieve
+what their answers cite), the numeric verifier (rounding tolerance, sign, percent-versus-
+ratio, every exemption rule, the derivation rule and its anti-laundering guard, plus an
+adversarial figure that must be flagged and nine legitimate answers that must not be), the
+scripted answers, and the route handler against a **mocked** upstream: success, upstream
+non-2xx, network failure, safety block, empty candidate, missing key, oversized body,
+malformed JSON, history cap and the rate limiter. Two of those assertions specifically
+check that a key never escapes — one feeds an upstream error body containing the key, one
+throws a network error containing it.
+
+**One assertion fails on this bundle, deliberately.** `revenue_reconciliation` emits a
+single `reconciliation_delta` column, while this dashboard and `INTERVIEW_QA.md` both
+describe two independent controls, `line_level_delta` and `aggregate_delta`. The dashboard
+renders the two missing figures as "not in bundle" — never as `$0.00` — and quotes the one
+that exists under its real name. It could be made green in one line by reading
+`reconciliation_delta` into both fields, and that is exactly the line this project exists
+to argue against: it would report that two independent controls passed when one ran. The
+fix belongs in `src/analytics/queries.py`; the assertion stays red until it lands.
 
 **No test calls Gemini.** The build sandbox has no route to the API, and a test that faked
 a successful call would be exactly the dishonesty this project argues against. The one
@@ -404,8 +486,9 @@ dashboard/
         ├── format.ts           # null-safe formatters
         ├── schema.ts           # star schema model (hand-authored)
         ├── lineage.ts          # pipeline stage graph (hand-authored)
-        ├── grounding.ts        # retrieval: run facts, scoring, context budget, prompt
-        ├── presets.ts          # scripted answers, derived from the bundle at render time
+        ├── grounding.ts        # retrieval: run facts, alias table, scoring, budget, prompt
+        ├── numericAudit.ts     # post-response figure check; pure, both sides of the wire
+        ├── presets.ts          # scripted answers + the ten ranked interview questions
         ├── chatContract.ts     # client↔server wire types (safe for the browser)
         ├── chatHandler.ts      # SERVER ONLY: validation, limits, upstream call
         └── rateLimit.ts        # per-IP limiter, and an honest note on what it misses

@@ -243,10 +243,15 @@ export default function Dashboard({
 
       <footer className="border-t border-line px-4 py-6 sm:px-6">
         <div className="mx-auto flex max-w-screen flex-wrap items-center justify-between gap-3 text-2xs text-ink-faint">
+          {/* This used to read "no server, no environment variables", which
+              stopped being true when the assistant became a real grounded
+              Gemini call. Every VIEW is still pre-rendered; the single dynamic
+              surface is the chat route. */}
           <span>
-            Static export. All data pre-rendered from{" "}
+            All dashboard data pre-rendered from{" "}
             <code className="font-mono">public/data/{sourceFile}</code> at build time — no runtime
-            fetches, no server, no environment variables.
+            fetches to render any view. The only server surface is{" "}
+            <code className="font-mono">/api/chat</code>.
           </span>
           <span className="font-mono">python {bundle.run.python_version}</span>
         </div>

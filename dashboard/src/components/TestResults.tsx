@@ -141,11 +141,21 @@ export default function TestResults({ bundle }: { bundle: Bundle }) {
       <section aria-labelledby="tests-heading">
         <SectionHeader
           title="Validation & Automated Test Suite"
-          subtitle="Complete test suite results (27/27 Pytest tests passing), star schema integrity assertions, revenue tie-out proofs, and contract validations."
+          subtitle="Star schema integrity assertions, revenue tie-out proofs, defect-coverage gates, and contract validations."
         />
 
+        {/* The pytest total deliberately does not appear here. It lived as the
+            literal "27/27" long after the suite reached 87, and this page has
+            no way to source it — the bundle carries pipeline output, not test
+            results. Claiming a number the page cannot verify is the exact habit
+            this project spent an audit removing. The count is asserted where it
+            can be proven: `python scripts/verify_submission.py` in the repo. */}
         <ExecutiveCallout title="Automated Verification & Integrity Guarantees" icon="🧪">
-          The pipeline and star schema data warehouse have passed <strong>27 out of 27 automated tests</strong> with 100% pass rate. Every defect handling decision is verified against edge conditions, foreign keys are strictly enforced, and revenue ties out with a <strong>$0.00 difference</strong>.
+          Every defect-handling decision is verified against edge conditions, the suite is
+          mutation-tested, foreign keys are strictly enforced, and revenue ties out with a{" "}
+          <strong>$0.00 difference</strong> at both line and aggregate level. Run{" "}
+          <code className="font-mono">python scripts/verify_submission.py</code> in the repository
+          for the live pass/fail table.
         </ExecutiveCallout>
       </section>
 
