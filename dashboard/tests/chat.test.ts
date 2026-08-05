@@ -45,7 +45,14 @@ import {
   findScriptedAnswer,
   resolveInterviewAnswer,
 } from "../src/lib/presets";
-import { GEMINI_MODEL, handleChatPost, handleChatStatus, type ChatDeps } from "../src/lib/chatHandler";
+import {
+  GEMINI_MODEL,
+  MODEL_PREFERENCE,
+  __resetModelResolution,
+  handleChatPost,
+  handleChatStatus,
+  type ChatDeps,
+} from "../src/lib/chatHandler";
 import { __resetRateLimiter } from "../src/lib/rateLimit";
 import { MAX_BODY_BYTES, MAX_HISTORY_TURNS, type ChatResponse, type ChatStatusResponse } from "../src/lib/chatContract";
 import type { Bundle } from "../src/lib/types";
@@ -362,7 +369,19 @@ async function main(): Promise<void> {
     okBody.ok === true && okBody.usage?.totalTokens === 3120,
   );
 
-  const call = captured[0];
+  /**
+   * The generateContent call, SELECTED rather than assumed to be `captured[0]`.
+   *
+   * On a cold instance the handler now precedes the first generation with one
+   * ListModels probe — the thing that removes the 404 class permanently (see
+   * `chatHandler.ts`). So the first captured call is the probe, not the call
+   * this block is about. Finding it by URL asserts exactly what these
+   * assertions always meant and stops them being hostage to call ordering.
+   */
+  const call = captured.find((c) => c.url.includes(":generateContent")) as Captured;
+  const probe = captured.find((c) => c.url.includes("/models?")) as Captured | undefined;
+  check("the first live request probes ListModels", Boolean(probe), captured.map((c) => c.url).join(" | "));
+  check("the ListModels probe carries the key in the header, not the URL", Boolean(probe) && probe!.headers["x-goog-api-key"] === FAKE_KEY && !probe!.url.includes(FAKE_KEY) && !probe!.url.includes("key="), probe?.url);
   check("calls the pinned model endpoint", call.url === `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, call.url);
   check("key travels in the x-goog-api-key header", call.headers["x-goog-api-key"] === FAKE_KEY);
   check("key is NOT in the URL", !call.url.includes(FAKE_KEY) && !call.url.includes("key="));
@@ -388,7 +407,9 @@ async function main(): Promise<void> {
   }));
   const capCaptured: Captured[] = [];
   await handleChatPost(post({ question: "and TX-04?", history: longHistory }), makeDeps({ captured: capCaptured }));
-  const contents = capCaptured[0].body.contents as unknown[];
+  // Same reasoning as above: pick the generation, not whatever came first.
+  const capCall = capCaptured.find((c) => c.url.includes(":generateContent")) as Captured;
+  const contents = capCall.body.contents as unknown[];
   check(
     "conversation length is capped server-side",
     contents.length === MAX_HISTORY_TURNS + 1,
@@ -880,6 +901,626 @@ async function main(): Promise<void> {
     "the alias phrases that fired are reported to the client",
     auditBadBody.ok === true && Array.isArray(auditBadBody.context.aliasPhrases),
   );
+
+  /* ── 12. Model discovery, fallback chain, retry and the auth dead end ────
+   *
+   * The failure this whole section exists for: a deployment that was live and
+   * correctly configured — key reaching the function, bundle readable — and
+   * whose every POST still came back `upstream_error`, with no way to tell from
+   * the outside whether the model name was wrong for that key, the key was
+   * rejected, or Google was having a bad minute. Three problems, three
+   * different fixes, one indistinguishable symptom.
+   *
+   * Everything below runs against a MOCKED upstream. There is still no test
+   * that calls Gemini, and none of these prove the real endpoint behaves this
+   * way — they prove that WHEN it behaves this way, this handler does the right
+   * thing. What only a live deployment can confirm is called out in the README.
+   */
+
+  section("model discovery and fallback: mocked upstream");
+
+  /** ListModels payload in the real ListModels shape. */
+  function listModels(entries: Array<[string, string[]]>): Response {
+    return new Response(
+      JSON.stringify({
+        models: entries.map(([name, methods]) => ({
+          name: `models/${name}`,
+          supportedGenerationMethods: methods,
+          displayName: name,
+        })),
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  /**
+   * An upstream error in Google's shape, with the API key deliberately echoed
+   * back inside it. Real Gemini 400s do exactly this. Every assertion about key
+   * leakage below is meaningless unless the mock actually tries to leak one.
+   */
+  function upstreamError(status: number, message: string): Response {
+    return new Response(
+      JSON.stringify({
+        error: { code: status, message: `${message} (key=${FAKE_KEY})`, status: "FAILED" },
+      }),
+      { status, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  const GEN = ":generateContent";
+  const isList = (url: string) => url.includes("/models?");
+  const modelOf = (url: string) => url.replace(/^.*\/models\//, "").replace(/:.*$/, "");
+
+  interface UpstreamScript {
+    captured: Captured[];
+    /** ListModels handler. Omit to make ListModels fail (blind mode). */
+    list?: () => Response;
+    /** generateContent handler. `nth` counts calls to THIS model, from 1. */
+    gen: (model: string, nth: number) => Response;
+    /** Every backoff the handler asked for, in order. */
+    sleeps: number[];
+    now?: () => number;
+  }
+
+  function scriptedDeps(script: UpstreamScript): ChatDeps {
+    const perModel = new Map<string, number>();
+    return {
+      getApiKey: () => FAKE_KEY,
+      getBundle: () => bundle,
+      rateLimitEnabled: false,
+      // Deterministic backoff, instant sleep: the retry path is exercised
+      // without the suite paying for it in wall-clock seconds.
+      sleep: async (ms: number) => {
+        script.sleeps.push(ms);
+      },
+      random: () => 0.5,
+      ...(script.now ? { now: script.now } : {}),
+      fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        script.captured.push({
+          url,
+          headers: (init?.headers ?? {}) as Record<string, string>,
+          body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {},
+        });
+        if (isList(url)) {
+          return script.list ? script.list() : upstreamError(500, "ListModels is having a day");
+        }
+        const model = modelOf(url);
+        const nth = (perModel.get(model) ?? 0) + 1;
+        perModel.set(model, nth);
+        return script.gen(model, nth);
+      },
+    };
+  }
+
+  const genUrls = (captured: Captured[]) =>
+    captured.filter((c) => c.url.includes(GEN)).map((c) => modelOf(c.url));
+
+  /* 12a. ListModels succeeds and picks the right model.
+   *
+   * The scenario that actually bit: `gemini-3.6-flash` is documented as
+   * generally available, and this API key's project does not have it. The
+   * chain must never call it — not "call it and recover", but never call it,
+   * because discovery already knows. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const deps = scriptedDeps({
+      captured,
+      sleeps: [],
+      list: () =>
+        listModels([
+          ["gemini-2.5-pro", ["generateContent"]],
+          ["gemini-3.5-flash-lite", ["generateContent"]],
+          ["gemini-2.5-flash", ["generateContent"]],
+          ["gemini-2.5-flash-image", ["generateContent"]],
+          ["gemini-9.9-flash-preview", ["generateContent"]],
+          ["text-embedding-004", ["embedContent"]],
+        ]),
+      gen: () => geminiOk("Answer from the listed model."),
+    });
+    const res = await handleChatPost(post({ question: "What is TX-03?" }), deps);
+    const body = (await res.json()) as ChatResponse;
+
+    check("discovery: ListModels is called before any generation", isList(captured[0].url), captured[0]?.url);
+    check(
+      "discovery: the first model ListModels actually reports is used",
+      body.ok === true && body.model === "gemini-3.5-flash-lite",
+      body.ok === true ? body.model : JSON.stringify(body),
+    );
+    check(
+      "discovery: a preference entry the project does not have is NEVER called",
+      !genUrls(captured).includes("gemini-3.6-flash"),
+      genUrls(captured).join(","),
+    );
+    check(
+      "discovery: exactly one generation call was needed",
+      genUrls(captured).length === 1,
+      genUrls(captured).join(","),
+    );
+    const resolution = body.ok === true ? body.resolution : undefined;
+    check("discovery: the resolution is reported to the client", Boolean(resolution));
+    check(
+      "discovery: state is reported as listed",
+      resolution?.discovery === "listed",
+      resolution?.discovery,
+    );
+    check(
+      "discovery: the missing preference entry is named as unavailable",
+      (resolution?.unavailable ?? []).includes("gemini-3.6-flash"),
+      (resolution?.unavailable ?? []).join(","),
+    );
+    check(
+      "discovery: preference order is preserved among the models that exist",
+      (resolution?.candidates ?? []).slice(0, 2).join(",") ===
+        "gemini-3.5-flash-lite,gemini-2.5-flash",
+      (resolution?.candidates ?? []).join(","),
+    );
+    check(
+      "discovery: other flash-class models are appended as later fallbacks",
+      (resolution?.candidates ?? []).includes("gemini-9.9-flash-preview"),
+      (resolution?.candidates ?? []).join(","),
+    );
+    check(
+      "discovery: a pro model is never added to the chain (cost, not capability)",
+      !(resolution?.candidates ?? []).includes("gemini-2.5-pro"),
+      (resolution?.candidates ?? []).join(","),
+    );
+    check(
+      "discovery: a non-text flash model is excluded even though it lists generateContent",
+      !(resolution?.candidates ?? []).includes("gemini-2.5-flash-image"),
+      (resolution?.candidates ?? []).join(","),
+    );
+    check(
+      "discovery: an embedding-only model is excluded",
+      !(resolution?.candidates ?? []).some((m) => m.startsWith("text-embedding")),
+      (resolution?.candidates ?? []).join(","),
+    );
+
+    // Cached for the instance: the second question must not re-probe.
+    const again: Captured[] = [];
+    await handleChatPost(
+      post({ question: "and TX-04?" }),
+      scriptedDeps({ captured: again, sleeps: [], list: () => listModels([]), gen: () => geminiOk("second") }),
+    );
+    check(
+      "discovery: ListModels is called once per instance, not once per request",
+      !again.some((c) => isList(c.url)),
+      again.map((c) => c.url).join(" | "),
+    );
+    check(
+      "the winning model is cached: the second question goes straight to it",
+      genUrls(again).join(",") === "gemini-3.5-flash-lite",
+      genUrls(again).join(","),
+    );
+
+    // The status probe is the diagnosis surface for all of the above.
+    const status = (await handleChatStatus(makeDeps()).json()) as ChatStatusResponse;
+    check(
+      "GET reports the resolved model once one has answered",
+      status.resolvedModel === "gemini-3.5-flash-lite" && status.model === "gemini-3.5-flash-lite",
+      JSON.stringify({ resolvedModel: status.resolvedModel, model: status.model }),
+    );
+    check(
+      "GET reports the candidate list",
+      (status.candidates ?? [])[0] === "gemini-3.5-flash-lite" && (status.candidates ?? []).length > 1,
+      (status.candidates ?? []).join(","),
+    );
+    check(
+      "GET reports the static preference order alongside it",
+      (status.preference ?? []).join(",") === MODEL_PREFERENCE.join(","),
+      (status.preference ?? []).join(","),
+    );
+    check("GET reports the discovery state", status.discovery === "listed", status.discovery);
+    check(
+      "GET still never contains the key",
+      !(await handleChatStatus(makeDeps()).text()).includes(FAKE_KEY),
+    );
+  }
+
+  /* 12b. ListModels fails — the preference list is tried anyway.
+   *
+   * Discovery is an optimisation. Some keys are restricted in ways that permit
+   * generateContent but not models.list, and on such a key a
+   * discovery-DEPENDENT implementation would refuse to work while a naive one
+   * succeeded. That would be a self-inflicted outage. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({ captured, sleeps: [], gen: () => geminiOk("Answer without discovery.") }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check("ListModels failure still yields a live answer", body.ok === true, JSON.stringify(body));
+    check(
+      "ListModels failure falls through to the first preference entry",
+      body.ok === true && body.model === GEMINI_MODEL,
+      body.ok === true ? body.model : "",
+    );
+    const resolution = body.ok === true ? body.resolution : undefined;
+    check(
+      "ListModels failure is reported as discovery: unavailable",
+      resolution?.discovery === "unavailable",
+      resolution?.discovery,
+    );
+    check(
+      "ListModels failure leaves the full preference list as the candidate chain",
+      (resolution?.candidates ?? []).join(",") === MODEL_PREFERENCE.join(","),
+      (resolution?.candidates ?? []).join(","),
+    );
+    check(
+      "the failed ListModels probe never leaks the key into the answer payload",
+      !JSON.stringify(body).includes(FAKE_KEY),
+    );
+  }
+
+  /* 12c. 404 on the first candidate, success on the second. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        gen: (model) =>
+          model === MODEL_PREFERENCE[0]
+            ? upstreamError(404, `models/${model} is not found for API version v1beta`)
+            : geminiOk("Answer from the second candidate."),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check("a 404 on the first candidate does not fail the request", res.status === 200, String(res.status));
+    check(
+      "the second candidate answers",
+      body.ok === true && body.model === MODEL_PREFERENCE[1],
+      body.ok === true ? body.model : JSON.stringify(body),
+    );
+    check(
+      "the answer text comes from the model that actually answered",
+      body.ok === true && body.answer === "Answer from the second candidate.",
+    );
+    const resolution = body.ok === true ? body.resolution : undefined;
+    check(
+      "the skipped candidate is reported so the UI can say it was skipped",
+      (resolution?.skipped ?? []).join(",") === MODEL_PREFERENCE[0],
+      (resolution?.skipped ?? []).join(","),
+    );
+    check(
+      "the per-candidate attempt log records the 404",
+      (resolution?.attempts ?? []).some(
+        (a) => a.model === MODEL_PREFERENCE[0] && a.outcome === "skipped" && a.status === 404,
+      ),
+      JSON.stringify(resolution?.attempts),
+    );
+    check(
+      "the numeric self-audit still runs when a fallback model answered",
+      body.ok === true && body.audit?.source === "retrieved-context",
+      JSON.stringify(body.ok === true ? body.audit : null),
+    );
+
+    // A retired candidate is never tried again on this instance.
+    const again: Captured[] = [];
+    await handleChatPost(
+      post({ question: "and TX-04?" }),
+      scriptedDeps({ captured: again, sleeps: [], gen: () => geminiOk("second question") }),
+    );
+    check(
+      "a candidate retired for a model-specific reason is never retried",
+      !genUrls(again).includes(MODEL_PREFERENCE[0]),
+      genUrls(again).join(","),
+    );
+    check(
+      "the winner is cached: the second question makes exactly one generation call",
+      genUrls(again).join(",") === MODEL_PREFERENCE[1],
+      genUrls(again).join(","),
+    );
+    const status = (await handleChatStatus(makeDeps()).json()) as ChatStatusResponse;
+    check(
+      "GET reports the retired model and why",
+      (status.retired ?? []).some((r) => r.model === MODEL_PREFERENCE[0] && r.reason.includes("404")),
+      JSON.stringify(status.retired),
+    );
+  }
+
+  /* 12d. A 400 that NAMES the model is a model failure; a 400 that does not is
+   * a request failure. Getting this backwards means walking the whole chain to
+   * report the same malformed-request error three times more slowly. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        gen: (model) =>
+          model === MODEL_PREFERENCE[0]
+            ? upstreamError(400, `Model ${model} is not supported for this API version`)
+            : geminiOk("Answer after a naming 400."),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a 400 that names the model falls through to the next candidate",
+      body.ok === true && body.model === MODEL_PREFERENCE[1],
+      body.ok === true ? body.model : JSON.stringify(body),
+    );
+  }
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        gen: () => upstreamError(400, "Invalid JSON payload received"),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a 400 that does not name the model is surfaced, not walked down the chain",
+      !body.ok && body.kind === "upstream_error",
+      JSON.stringify(body),
+    );
+    check(
+      "a generic 400 costs exactly one call",
+      genUrls(captured).length === 1,
+      genUrls(captured).join(","),
+    );
+  }
+
+  /* 12e. 429 is retried with jittered backoff, then succeeds. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const sleeps: number[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps,
+        gen: (_model, nth) =>
+          nth === 1 ? upstreamError(429, "Resource has been exhausted") : geminiOk("Answer after a retry."),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check("a 429 is retried rather than surfaced", res.status === 200, String(res.status));
+    check(
+      "the retry produces the answer",
+      body.ok === true && body.answer === "Answer after a retry.",
+      JSON.stringify(body),
+    );
+    check(
+      "the retry stayed on the same model (a 429 is not the model's fault)",
+      genUrls(captured).join(",") === `${MODEL_PREFERENCE[0]},${MODEL_PREFERENCE[0]}`,
+      genUrls(captured).join(","),
+    );
+    check("the retry waited before trying again", sleeps.length === 1 && sleeps[0] > 0, JSON.stringify(sleeps));
+    check(
+      "the backoff is jittered, not a bare constant",
+      sleeps[0] > 0 && sleeps[0] < 4000,
+      String(sleeps[0]),
+    );
+    const resolution = body.ok === true ? body.resolution : undefined;
+    check(
+      "the attempt count is reported so a slow answer is explicable",
+      (resolution?.attempts ?? []).some((a) => a.outcome === "answered" && a.attempts === 2),
+      JSON.stringify(resolution?.attempts),
+    );
+  }
+
+  /* 12f. 5xx is retried too, and a bounded retry really is bounded. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const sleeps: number[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({ captured, sleeps, gen: () => upstreamError(503, "The service is overloaded") }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a persistent 5xx is retried a bounded number of times, then surfaced",
+      genUrls(captured).filter((m) => m === MODEL_PREFERENCE[0]).length === 3,
+      genUrls(captured).join(","),
+    );
+    check("the bounded retry backs off between attempts", sleeps.length === 2, JSON.stringify(sleeps));
+    check(
+      "backoff grows between attempts rather than hammering",
+      sleeps[1] > sleeps[0],
+      JSON.stringify(sleeps),
+    );
+    check(
+      "an exhausted 5xx is typed upstream_error, not upstream_auth",
+      !body.ok && body.kind === "upstream_error",
+      JSON.stringify(body),
+    );
+    check(
+      "the exhausted 5xx message says how many attempts were spent",
+      !body.ok && body.message.includes("3 attempts"),
+      !body.ok ? body.message : "",
+    );
+  }
+
+  /* 12g. 403 — the one failure no code change fixes. NOT retried, NOT walked
+   * down the chain (every candidate uses the same credential), and surfaced
+   * with the console fix spelled out. */
+  for (const authStatus of [401, 403]) {
+    __resetModelResolution();
+    const captured: Captured[] = [];
+    const sleeps: number[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps,
+        gen: () => upstreamError(authStatus, "API key not valid. Please pass a valid API key."),
+      }),
+    );
+    const raw = await res.text();
+    const body = JSON.parse(raw) as ChatResponse;
+
+    check(
+      `a ${authStatus} is typed upstream_auth, distinctly from every other failure`,
+      !body.ok && body.kind === "upstream_auth",
+      raw,
+    );
+    check(
+      `a ${authStatus} is NOT retried`,
+      genUrls(captured).length === 1 && sleeps.length === 0,
+      `${genUrls(captured).join(",")} / sleeps ${sleeps.length}`,
+    );
+    check(
+      `a ${authStatus} does not walk the rest of the chain`,
+      new Set(genUrls(captured)).size === 1,
+      genUrls(captured).join(","),
+    );
+    check(
+      `a ${authStatus} carries the key-specific remedy`,
+      !body.ok && (body.remedy ?? "").includes("aistudio.google.com/apikey"),
+      !body.ok ? String(body.remedy) : "",
+    );
+    check(
+      `the ${authStatus} remedy names the restriction check as well as regeneration`,
+      !body.ok && (body.remedy ?? "").includes("restriction"),
+      !body.ok ? String(body.remedy) : "",
+    );
+    check(
+      `the ${authStatus} remedy says plainly that no code change will help`,
+      !body.ok && (body.remedy ?? "").includes("not a code problem"),
+      !body.ok ? String(body.remedy) : "",
+    );
+    check(
+      `a ${authStatus} response never contains the key, even though the upstream body did`,
+      !raw.includes(FAKE_KEY),
+      raw,
+    );
+    check(
+      `a ${authStatus} maps to 502, not to ${authStatus} (the CALLER is not unauthorised)`,
+      res.status === 502,
+      String(res.status),
+    );
+  }
+
+  /* 12h. Every candidate fails — the scripted fallback must still fire.
+   * Server-side that means: a typed, non-throwing failure, so the client's
+   * `pushScripted` path runs and the reviewer gets a bundle-derived answer. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        gen: (model) => upstreamError(404, `models/${model} is not found for API version v1beta`),
+      }),
+    );
+    const raw = await res.text();
+    const body = JSON.parse(raw) as ChatResponse;
+    check(
+      "when every candidate 404s the handler returns a typed failure, not a throw",
+      !body.ok && body.kind === "upstream_error",
+      raw,
+    );
+    check(
+      "every candidate was actually tried before giving up",
+      MODEL_PREFERENCE.every((m) => genUrls(captured).includes(m)),
+      genUrls(captured).join(","),
+    );
+    check(
+      "each candidate was tried once — a 404 is a fallback, not a retry",
+      genUrls(captured).length === MODEL_PREFERENCE.length,
+      genUrls(captured).join(","),
+    );
+    check(
+      "the message names the fix a reviewer can actually apply",
+      !body.ok && body.message.includes("GEMINI_MODEL"),
+      !body.ok ? body.message : "",
+    );
+    check(
+      "all skipped candidates are reported for the UI to show",
+      !body.ok && (body.resolution?.skipped ?? []).length === MODEL_PREFERENCE.length,
+      !body.ok ? JSON.stringify(body.resolution?.skipped) : "",
+    );
+    check(
+      "a total model failure still never leaks the key",
+      !raw.includes(FAKE_KEY),
+      raw,
+    );
+    check(
+      "the status is 502, so the client's scripted-fallback branch runs",
+      res.status === 502,
+      String(res.status),
+    );
+  }
+
+  /* 12i. The overall timeout budget covers discovery + candidates + retries,
+   * not each call separately. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    let clock = 0;
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        // Every read of the clock jumps 20s: the budget is gone before the
+        // first generation call can be made.
+        now: () => {
+          clock += 20_000;
+          return clock;
+        },
+        gen: () => geminiOk("should never be reached"),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check("an exhausted overall budget returns 504 timeout", res.status === 504, String(res.status));
+    check("the timeout is typed timeout", !body.ok && body.kind === "timeout", JSON.stringify(body));
+    check(
+      "no generation call is made once the budget is gone",
+      genUrls(captured).length === 0,
+      genUrls(captured).join(","),
+    );
+    check(
+      "discovery is skipped rather than eating a budget the question needs",
+      !captured.some((c) => isList(c.url)),
+      captured.map((c) => c.url).join(" | "),
+    );
+  }
+
+  /* 12j. The key never travels in a URL, on any of the new call paths. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        list: () => listModels([["gemini-2.5-flash", ["generateContent"]]]),
+        gen: (model) =>
+          model === "gemini-2.5-flash" ? geminiOk("ok") : upstreamError(404, "nope"),
+      }),
+    );
+    check(
+      "no request URL anywhere contains the key or a key= parameter",
+      captured.every((c) => !c.url.includes(FAKE_KEY) && !c.url.includes("key=")),
+      captured.map((c) => c.url).join(" | "),
+    );
+    check(
+      "every request carries the key in x-goog-api-key instead",
+      captured.length > 0 && captured.every((c) => c.headers["x-goog-api-key"] === FAKE_KEY),
+      String(captured.length),
+    );
+  }
+
+  // Leave the module caches clean for anything that runs after this section.
+  __resetModelResolution();
 
   /* ── Result ─────────────────────────────────────────────────────────────── */
 

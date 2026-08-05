@@ -47,7 +47,15 @@ import { handleChatPost, handleChatStatus } from "@/lib/chatHandler";
  */
 export const dynamic = "force-dynamic";
 
-/** Capability probe. Returns a boolean about the key, never the key. */
+/**
+ * Capability probe and diagnosis surface. Returns a boolean about the key,
+ * never the key — plus the model-resolution state of this instance (which
+ * model is answering, what else is queued, whether ListModels has run, what has
+ * already been retired). Synchronous and network-free: it reports what the
+ * instance knows, and never spends an upstream call to learn more, because a
+ * reviewer who opens the panel and closes it again should not cost the
+ * deployment a round-trip.
+ */
 export function GET(): Response {
   return handleChatStatus();
 }

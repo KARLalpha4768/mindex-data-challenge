@@ -168,8 +168,45 @@ whose hand-written figures had gone stale (it quoted `$170,816.34` for a number 
 
 | Mode | When | What produces the text |
 |---|---|---|
-| **Live** | `GEMINI_API_KEY` is set and the server can read the bundle | `gemini-3.6-flash`, answering from a retrieved slice of the bundle |
+| **Live** | `GEMINI_API_KEY` is set and the server can read the bundle | The first flash-class model this key's project can actually call — `gemini-3.6-flash` by preference — answering from a retrieved slice of the bundle |
 | **Offline** | no key, the API call fails, or you clicked a bundle chip | Scripted answers assembled from `bundle.json` at render time |
+
+### Which model, and what happens when it is not there
+
+Model availability is a property of the API key's **Google Cloud project**, not of the
+documentation: a generally-available name can still return `404` for a given key. A single
+pinned model name therefore has a failure mode where the deployment is completely correct —
+key present, bundle readable, `GET /api/chat` reporting `configured: true` — and every
+question still falls back to a scripted answer.
+
+`src/lib/chatHandler.ts` removes that class of failure:
+
+1. **Discovery.** On the first live question per serverless instance, the server calls
+   `GET /v1beta/models` (ListModels) and caches the answer. The candidate chain is the
+   preference list *filtered by what the key's own project reports as supporting
+   `generateContent`*, followed by any other flash-class model it reports (stable names
+   before preview ones). Preference order is
+   `gemini-3.6-flash → gemini-3.5-flash-lite → gemini-2.5-flash`, and setting `GEMINI_MODEL`
+   on the deployment puts that name at the head of the queue without a rebuild.
+   If ListModels itself fails, the preference list is tried directly — discovery is an
+   optimisation, never a dependency, because some keys permit `generateContent` but not
+   `models.list`.
+2. **Fallback.** A `404`, or a `400` whose error text names the model, retires that
+   candidate for the life of the instance and moves to the next one. The winner is cached,
+   so the chain is walked at most once per instance.
+3. **Retry.** `429` and `5xx` get up to three attempts with jittered backoff, inside the
+   same 25-second overall budget that covers discovery and every candidate. `400`, `401`
+   and `403` are never retried — they are deterministic, and retrying them only makes the
+   diagnosis slower.
+4. **The dead end, named as such.** `401`/`403` is the one failure no code change fixes.
+   It gets its own error kind (`upstream_auth`), its own red banner in the panel, and the
+   actual remedy in words: regenerate the key at `aistudio.google.com/apikey`, check the
+   key's API/referrer restrictions, confirm the project has the Generative Language API
+   enabled. You can tell at a glance whether the problem is the key or the code.
+
+`GET /api/chat` is the diagnosis surface for all of this. It reports `configured`,
+`bundleAvailable`, the resolved model, the full candidate list, the discovery state and any
+model already retired — and, as always, never the key.
 
 The panel opens on **the ten hardest questions about this pipeline**, ranked, taken from
 `INTERVIEW_QA.md` — four visible, six behind a disclosure, so a reviewer does not have to

@@ -35,6 +35,23 @@
  * same code, so the badge means the same thing in both modes and the scripted
  * set acts as a standing sanity check on the verifier.
  *
+ * WHY THE PANEL NOW TALKS ABOUT MODELS
+ * ------------------------------------
+ * The server chooses its model from a preference chain filtered by what the API
+ * key's own project reports (see `chatHandler.ts`). Two consequences reach the
+ * UI, and both are deliberate:
+ *
+ *   • the badge and the provenance line name the model that ACTUALLY answered,
+ *     which is not always the first choice — and when earlier candidates were
+ *     skipped, the message says so. A silent fallback looks identical to a
+ *     first-choice success, and the difference is exactly what someone
+ *     debugging a deployment needs;
+ *   • a rejected API key (HTTP 401/403) gets its own banner rather than being
+ *     folded into the generic "offline mode" copy, which would be actively
+ *     misleading: a key IS configured, and Google refused it. That banner
+ *     carries the server's remedy verbatim, so the answer to "is this my key or
+ *     their code?" is on screen without opening a network tab.
+ *
  * The panel also opens on the ten ranked interview questions rather than on an
  * empty text box, because a reviewer who has to guess what the assistant can
  * answer will ask it something it cannot, once, and then stop.
@@ -52,6 +69,7 @@ import {
   type ChatErrorKind,
   type ChatResponse,
   type ChatStatusResponse,
+  type ModelResolution,
   type NumericAudit,
 } from "@/lib/chatContract";
 import { auditAnswer, indexBundleNumbers } from "@/lib/numericAudit";
@@ -116,6 +134,13 @@ const ERROR_COPY: Record<ChatErrorKind, string> = {
   too_large: "the question was too long",
   bundle_unavailable: "the server could not read the data bundle",
   upstream_error: "the model API call failed",
+  /**
+   * Deliberately worded to end the "is it me or the code?" question in one
+   * reading. Every other entry describes a symptom; this one names the cause,
+   * because it is the only failure class where the cause is knowable from the
+   * status alone and the fix is not in this repository.
+   */
+  upstream_auth: "the API key was REJECTED by Google — this is a key problem, not a code problem",
   blocked: "the model declined to answer",
   timeout: "the model timed out",
   empty_response: "the model returned nothing",
@@ -214,6 +239,27 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
   const [isSending, setIsSending] = React.useState(false);
 
   /**
+   * The one failure the reviewer must not have to diagnose.
+   *
+   * A rejected key (HTTP 401/403 from Google) is the single class of failure
+   * that no amount of retrying, model-switching or redeploying fixes. It gets
+   * its own banner, in its own colour, carrying the server's `remedy` string
+   * verbatim — so the answer to "is this broken because of my key or because of
+   * their code?" is on screen without opening a network tab. Null in every
+   * other state, including every other kind of failure.
+   */
+  const [keyRejected, setKeyRejected] = React.useState<{ message: string; remedy?: string } | null>(
+    null,
+  );
+
+  /**
+   * What the server said about model selection on the last exchange. Purely a
+   * diagnosis surface: which names were queued, which were skipped as
+   * unavailable to this key's project, and which one answered.
+   */
+  const [resolution, setResolution] = React.useState<ModelResolution | null>(null);
+
+  /**
    * Scripted answers are derived from the bundle, so they are recomputed only
    * when the bundle identity changes — i.e. never, in practice. Doing it in a
    * memo rather than at module scope keeps the derivation honest: there is no
@@ -283,6 +329,21 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
         const status = (await res.json()) as ChatStatusResponse;
         if (cancelled) return;
         setModelName(status.model ?? "");
+        // Additive fields: a server built against the earlier contract omits
+        // them and the panel simply has nothing extra to show.
+        if (status.candidates?.length) {
+          setResolution({
+            preference: status.preference ?? status.candidates,
+            candidates: status.candidates,
+            ...(status.resolvedModel ? { selected: status.resolvedModel } : {}),
+            ...(status.modelOverride ? { requested: status.modelOverride } : {}),
+            discovery: status.discovery ?? "not-attempted",
+            discoveryNote: status.discoveryNote ?? "",
+            attempts: [],
+            skipped: (status.retired ?? []).map((r) => r.model),
+            unavailable: [],
+          });
+        }
         setMode(status.configured && status.bundleAvailable ? "live" : "offline");
       } catch {
         if (!cancelled) setMode("offline");
@@ -433,13 +494,29 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
         const inferred = data.answer.match(DEFECT_CODE_RE)?.[0]?.toUpperCase();
         const linkCode = code ?? (inferred && knownCodes.has(inferred) ? inferred : undefined);
 
+        // The live model answered, so any earlier key complaint is stale.
+        setKeyRejected(null);
+        if (data.resolution) setResolution(data.resolution);
+        // `data.model` is the model that ACTUALLY produced this text, which is
+        // not necessarily the first choice. Show it, not the configured name.
+        setModelName(data.model);
+
+        // When the chain skipped a candidate, say so on the message itself.
+        // A silent fallback is indistinguishable from a first-choice success,
+        // and the difference is exactly what a reviewer would want to know.
+        const skipped = data.resolution?.skipped ?? [];
+        const skipNote = skipped.length
+          ? ` · ${skipped.length} earlier candidate${skipped.length === 1 ? "" : "s"} skipped as ` +
+            `unavailable to this API key: ${skipped.join(", ")}`
+          : "";
+
         setMessages((prev) => [
           ...prev.filter((m) => m.source !== "pending"),
           {
             id: `g-${Date.now()}`,
             source: "gemini",
             text: data.answer,
-            sourceNote: `generated by ${data.model}, grounded on retrieved bundle context`,
+            sourceNote: `generated by ${data.model}, grounded on retrieved bundle context${skipNote}`,
             defectCode: linkCode,
             contextNote:
               `context: ~${data.context.approxTokens.toLocaleString()} of ` +
@@ -460,10 +537,28 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
       } else {
         // Graceful degradation: the reviewer still gets a real, bundle-derived
         // answer, and is told exactly why it is not the live one.
+        if (data.resolution) setResolution(data.resolution);
         if (data.kind === "not_configured" || data.kind === "bundle_unavailable") setMode("offline");
+        /**
+         * A rejected key is terminal for the session. Dropping to offline mode
+         * means the next nine questions answer instantly from the bundle
+         * instead of each spending a round-trip to be told the same thing, and
+         * the banner explains why rather than leaving the panel to look
+         * mysteriously downgraded.
+         */
+        if (data.kind === "upstream_auth") {
+          setKeyRejected({ message: data.message, remedy: data.remedy });
+          setMode("offline");
+        }
+        // The server computes a precise reason — e.g. "Model API returned HTTP
+        // 404 — the model name may not exist for this API version". Discarding
+        // it in favour of the generic category left "the model API call failed"
+        // as the only signal, which is not enough to act on. The server's
+        // message is already redacted of the API key on every path.
+        const detail = typeof data.message === "string" && data.message ? ` · ${data.message}` : "";
         pushScripted(
           fallback(),
-          `offline mode — scripted answer (${ERROR_COPY[data.kind] ?? "the live model was unavailable"})`,
+          `offline mode — scripted answer (${ERROR_COPY[data.kind] ?? "the live model was unavailable"}${detail})`,
           true,
         );
       }
@@ -512,7 +607,13 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
   };
 
   const modeBadge =
-    mode === "live" ? (
+    keyRejected ? (
+      // Distinct from every other offline state on purpose: "offline · scripted"
+      // reads as a configuration choice, and this is not one.
+      <Badge tone="bad" title="Google rejected the configured API key (HTTP 401/403)">
+        key rejected · scripted
+      </Badge>
+    ) : mode === "live" ? (
       <Badge tone="ok" title={`Live answers from ${modelName || "the configured model"}`}>
         live · {modelName || "model"}
       </Badge>
@@ -603,8 +704,68 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
             </div>
           </header>
 
+          {/* The rejected-key banner. Takes the place of the generic offline
+              explainer, because when the key is the problem, "no key is
+              configured (or the bundle is unreadable)" is actively misleading:
+              a key IS configured, and Google refused it. */}
+          {keyRejected && (
+            <div className="border-b border-bad/50 bg-bad/10 px-5 py-3 text-2xs leading-relaxed text-ink">
+              <p className="text-xs font-semibold text-bad">
+                The API key was rejected by Google. This is not a bug in this app.
+              </p>
+              <p className="mt-1.5 text-ink-dim">{keyRejected.message}</p>
+              {keyRejected.remedy && (
+                <p className="mt-1.5 text-ink-dim">
+                  <span className="font-semibold text-ink">How to fix it: </span>
+                  {keyRejected.remedy}
+                </p>
+              )}
+              <p className="mt-1.5 text-ink-faint">
+                Until then the panel answers from{" "}
+                <code className="font-mono">bundle.json</code>, which needs no key and no network.
+              </p>
+            </div>
+          )}
+
+          {/* Model-selection diagnosis. Collapsed, because on a healthy
+              deployment there is nothing here worth the vertical space — and
+              on a broken one it is the first thing anyone will want. */}
+          {resolution && (
+            <details className="border-b border-line bg-panel/40 px-5 py-2">
+              <summary className="cursor-pointer text-2xs text-ink-faint hover:text-accent">
+                model selection —{" "}
+                {resolution.selected
+                  ? `answering with ${resolution.selected}`
+                  : `${resolution.candidates.length} candidate${resolution.candidates.length === 1 ? "" : "s"} queued`}
+                {resolution.skipped.length > 0 && `, ${resolution.skipped.length} skipped`}
+              </summary>
+              <div className="mt-2 space-y-1 font-mono text-2xs leading-relaxed text-ink-dim">
+                {resolution.requested && <p>GEMINI_MODEL override: {resolution.requested}</p>}
+                <p>preference: {resolution.preference.join(" → ")}</p>
+                <p>tried in order: {resolution.candidates.join(" → ")}</p>
+                <p>
+                  discovery ({resolution.discovery}): {resolution.discoveryNote}
+                </p>
+                {resolution.unavailable.length > 0 && (
+                  <p>not reported by ListModels for this key: {resolution.unavailable.join(", ")}</p>
+                )}
+                {resolution.attempts.length > 0 && (
+                  <ul className="list-inside list-disc">
+                    {resolution.attempts.map((a, i) => (
+                      <li key={i}>
+                        {a.model} — {a.outcome}
+                        {a.status !== undefined ? ` (HTTP ${a.status})` : ""} after {a.attempts}{" "}
+                        attempt{a.attempts === 1 ? "" : "s"}: {a.reason}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </details>
+          )}
+
           {/* Offline explainer — say why, not just that. */}
-          {mode === "offline" && (
+          {mode === "offline" && !keyRejected && (
             <div className="border-b border-line bg-warn/5 px-5 py-2.5 text-2xs leading-relaxed text-ink-dim">
               <span className="font-semibold text-warn">Offline mode.</span> This deployment has no{" "}
               <code className="font-mono">GEMINI_API_KEY</code> configured (or the server could not read
