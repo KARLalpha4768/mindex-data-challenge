@@ -1052,13 +1052,12 @@ export async function handleChatPost(
     `----\nQUESTION: ${question}`;
 
   const payload = {
-    systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+    system_instruction: SYSTEM_INSTRUCTION,
     input: userTurn,
     generation_config: {
       temperature: TEMPERATURE,
-      topP: 0.9,
-      candidateCount: 1,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      top_p: 0.9,
+      max_output_tokens: MAX_OUTPUT_TOKENS,
     },
   };
 
