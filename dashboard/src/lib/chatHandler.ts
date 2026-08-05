@@ -399,10 +399,10 @@ async function runDiscovery(
   /* New keys with AQ. prefix do not have access to ListModels endpoint */
   if (apiKey.startsWith("AQ.")) {
     return {
-      candidates: [...MODEL_PREFERENCE],
+      generateContentModels: [],
       state: "unavailable",
       note: "ListModels returned HTTP 400; the preference list was tried directly.",
-    } as Discovery;
+    };
   }
 
   let res: Response;
@@ -870,12 +870,12 @@ async function callModelWithFallback(
         outcome: "failed",
         status,
         attempts: attemptCount,
-        reason: statusPhrase(status),
+        reason: `${statusPhrase(status)}: ${detail}`,
       });
       return {
         kind: "failed",
         errorKind: "upstream_error",
-        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}.`,
+        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}. Detail: ${detail}`,
         resolution: resolution(),
       };
     }

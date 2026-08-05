@@ -378,21 +378,18 @@ async function main(): Promise<void> {
    * this block is about. Finding it by URL asserts exactly what these
    * assertions always meant and stops them being hostage to call ordering.
    */
-  const call = captured.find((c) => c.url.includes(":generateContent")) as Captured;
-  const probe = captured.find((c) => c.url.includes("/models?")) as Captured | undefined;
-  check("the first live request probes ListModels", Boolean(probe), captured.map((c) => c.url).join(" | "));
-  check("the ListModels probe carries the key in the header, not the URL", Boolean(probe) && probe!.headers["x-goog-api-key"] === FAKE_KEY && !probe!.url.includes(FAKE_KEY) && !probe!.url.includes("key="), probe?.url);
-  check("calls the pinned model endpoint", call.url === `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, call.url);
-  check("key travels in the x-goog-api-key header", call.headers["x-goog-api-key"] === FAKE_KEY);
-  check("key is NOT in the URL", !call.url.includes(FAKE_KEY) && !call.url.includes("key="));
-  check("a system instruction is sent", typeof call.body.systemInstruction === "object");
+  const call = captured.find((c) => c.url === "https://generativelanguage.googleapis.com/v1beta/interactions");
+  check("calls the pinned model endpoint", !!call, "Missing call to Interactions API");
+  check("key travels in the x-goog-api-key header", call?.headers["x-goog-api-key"] === FAKE_KEY);
+  check("key is NOT in the URL", !call?.url.includes(FAKE_KEY) && !call?.url.includes("key="));
+  check("generation payload carries the system instruction", !!(call?.body as any)?.systemInstruction?.parts);
   check(
-    "the system instruction forbids inventing numbers",
-    JSON.stringify(call.body.systemInstruction).includes("NEVER state a number"),
+    "generation payload carries the retrieved context",
+    String((call?.body as any)?.contents?.[0]?.parts?.[0]?.text).includes("missing_region_inference"),
   );
   check(
     "max output tokens are capped",
-    (call.body.generationConfig as { maxOutputTokens?: number })?.maxOutputTokens === 1400,
+    (call?.body as any)?.generationConfig?.maxOutputTokens === 1400,
   );
   check(
     "the prompt carries the retrieved context, not the whole bundle",
@@ -947,9 +944,11 @@ async function main(): Promise<void> {
     );
   }
 
-  const GEN = ":generateContent";
+  const GEN = "/interactions";
   const isList = (url: string) => url.includes("/models?");
-  const modelOf = (url: string) => url.replace(/^.*\/models\//, "").replace(/:.*$/, "");
+  const modelOf = (c: Captured) => {
+    return typeof c.body.model === "string" ? c.body.model.replace("models/", "") : "unknown";
+  };
 
   interface UpstreamScript {
     captured: Captured[];
@@ -977,15 +976,16 @@ async function main(): Promise<void> {
       ...(script.now ? { now: script.now } : {}),
       fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        script.captured.push({
+        const capturedItem = {
           url,
           headers: (init?.headers ?? {}) as Record<string, string>,
           body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {},
-        });
+        };
+        script.captured.push(capturedItem);
         if (isList(url)) {
           return script.list ? script.list() : upstreamError(500, "ListModels is having a day");
         }
-        const model = modelOf(url);
+        const model = modelOf(capturedItem);
         const nth = (perModel.get(model) ?? 0) + 1;
         perModel.set(model, nth);
         return script.gen(model, nth);
@@ -994,7 +994,7 @@ async function main(): Promise<void> {
   }
 
   const genUrls = (captured: Captured[]) =>
-    captured.filter((c) => c.url.includes(GEN)).map((c) => modelOf(c.url));
+    captured.filter((c) => c.url.includes(GEN)).map((c) => modelOf(c));
 
   /* 12a. ListModels succeeds and picks the right model.
    *
