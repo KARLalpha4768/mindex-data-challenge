@@ -382,7 +382,7 @@ async function main(): Promise<void> {
   const probe = captured.find((c) => c.url.includes("/models?")) as Captured | undefined;
   check("the first live request probes ListModels", Boolean(probe), captured.map((c) => c.url).join(" | "));
   check("the ListModels probe carries the key in the header, not the URL", Boolean(probe) && probe!.headers["x-goog-api-key"] === FAKE_KEY && !probe!.url.includes(FAKE_KEY) && !probe!.url.includes("key="), probe?.url);
-  check("calls the pinned model endpoint", call.url === `https://generativelanguage.googleapis.com/v1beta/interactions`, call.url);
+  check("calls the pinned model endpoint", call.url === `https://generativelanguage.googleapis.com/v1beta2/interactions`, call.url);
   check("key travels in the x-goog-api-key header", call.headers["x-goog-api-key"] === FAKE_KEY);
   check("key is NOT in the URL", !call.url.includes(FAKE_KEY) && !call.url.includes("key="));
   check("a system instruction is sent", typeof call.body.systemInstruction === "object");
