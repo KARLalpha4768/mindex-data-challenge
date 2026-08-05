@@ -735,7 +735,7 @@ async function callModelWithFallback(
             "x-goog-api-key": apiKey,
           },
           body: JSON.stringify({
-            model: `models/${model}`,
+            model: model,
             ...payload
           }),
           signal: AbortSignal.timeout(budget),
@@ -1054,7 +1054,7 @@ export async function handleChatPost(
   const payload = {
     systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
     input: userTurn,
-    generationConfig: {
+    generation_config: {
       temperature: TEMPERATURE,
       topP: 0.9,
       candidateCount: 1,

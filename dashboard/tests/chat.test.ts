@@ -392,7 +392,7 @@ async function main(): Promise<void> {
   );
   check(
     "max output tokens are capped",
-    (call.body.generationConfig as { maxOutputTokens?: number })?.maxOutputTokens === 1400,
+    (call.body.generation_config as { maxOutputTokens?: number })?.maxOutputTokens === 1400,
   );
   check(
     "the prompt carries the retrieved context, not the whole bundle",
