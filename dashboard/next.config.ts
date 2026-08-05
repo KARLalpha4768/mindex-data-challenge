@@ -3,9 +3,7 @@ import type { NextConfig } from "next";
 /**
  * WHY THIS IS NO LONGER A STATIC EXPORT
  * -------------------------------------
- * This app used to set `output: "export"`, which emits `out/` and nothing else:
- * a folder of HTML that can be served from any bucket and cannot break at
- * runtime. That was the right call while the app was purely a viewer.
+
  *
  * It stopped being the right call when the assistant became real. `/api/chat`
  * holds a secret — `GEMINI_API_KEY` — and a static export has no server, so
