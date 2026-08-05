@@ -360,6 +360,34 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
       <Badge tone="neutral">checking…</Badge>
     );
 
+  const handleExportTranscript = () => {
+    const lines: string[] = [
+      "# Karl David's Solution — Reviewer Assistant Q&A Transcript",
+      `*Generated at ${new Date().toLocaleString()}*`,
+      "",
+      "---",
+      "",
+    ];
+    for (const m of messages) {
+      if (m.source === "system") continue;
+      lines.push(`### **[${m.source.toUpperCase()}]** (${m.timestamp})`);
+      lines.push(m.text);
+      if (m.talkingPoints?.length) {
+        lines.push("\n**Talking Points:**");
+        for (const tp of m.talkingPoints) lines.push(`- ${tp}`);
+      }
+      if (m.codeRef) lines.push(`\n*Code Reference:* \`${m.codeRef}\``);
+      lines.push("\n---\n");
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mindex_reviewer_qa_transcript_${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <>
       {/* Floating toggle */}
@@ -392,13 +420,23 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
                 </span>
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              className="rounded px-2.5 py-1 text-xs text-ink-dim hover:bg-panel hover:text-ink"
-            >
-              Close
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExportTranscript}
+                className="rounded border border-line bg-panel px-2.5 py-1 text-xs text-accent hover:border-accent hover:bg-accent/10"
+                title="Download transcript of current Q&A session as Markdown"
+              >
+                Export Q&A Log
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="rounded px-2.5 py-1 text-xs text-ink-dim hover:bg-panel hover:text-ink"
+              >
+                Close
+              </button>
+            </div>
           </header>
 
           {/* Offline explainer — say why, not just that. */}

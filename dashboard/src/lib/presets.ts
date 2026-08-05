@@ -290,6 +290,97 @@ export function runSummaryAnswer(facts: RunFacts): ScriptedAnswer {
   };
 }
 
+function tradeoffAnswers(bundle: Bundle, facts: RunFacts): ScriptedAnswer[] {
+  const r = facts.recon;
+  return [
+    {
+      label: "⚡ TX-03 Discount Preservation",
+      defectCode: "TX-03",
+      question: "Why preserve reported total_amount for TX-03 rather than recomputing quantity × list_price?",
+      answer: `TX-03 (Silent Discount) handling:\n- 20 transaction rows carry total_amount lower than quantity × unit_price by 5% to 20%.\n- Decision: PRESERVE total_amount verbatim (${formatCurrency(r.netRevenue)} net revenue).\n- Recomputing total_amount would have overstated revenue by ${formatCurrency(r.discountTotal)} and erased the silent discount finding entirely.\n- Reconciliation: Gross list value (${formatCurrency(r.grossListValue)}) - Discount total (${formatCurrency(r.discountTotal)}) = Gross net of discount (${formatCurrency(r.grossSalesNetOfDiscount)}). Plus returns (${formatCurrency(r.returnsValue)}) = Net revenue (${formatCurrency(r.netRevenue)}) with $0.00 tie-out delta.`,
+      talkingPoints: [
+        `Preserved ${formatCurrency(r.discountTotal)} of unrecorded promotional discounts across 20 transaction rows.`,
+        "Recomputing line total (the previous attempt's bug) would overstate sales revenue.",
+        "SQL tie-out delta is $0.00, proving mathematical consistency across fact loading.",
+      ],
+      codeRef: "src/cleaning/transactions.py:flag_discounts",
+      codeSnippet: "extended_amount = quantity * unit_price\ndiscount_amount = extended_amount - total_amount\nhas_discount = discount_amount > PRICE_TOLERANCE",
+      codeAnnotations: [
+        { lineRange: "Line 1-3", title: "Discount Calculation", description: "Preserves reported total_amount as authoritative for net revenue while exposing discount_amount." }
+      ],
+      keywords: ["tx-03", "discount", "preservation", "reconcile", "total_amount", "extended_amount"]
+    },
+    {
+      label: "⚡ PR-02 Catalog vs Fact Price",
+      defectCode: "PR-02",
+      question: "Why does dim_product store $150.11 while fact_sales carries $141.61 for product P005?",
+      answer: "PR-02 (Catalog Price Conflict) handling:\n- P005 appears twice in products.csv with list prices of $141.61 and $150.11 (an $8.50 price increase).\n- Decision: dim_product stores $150.11 as the current list price via an explicit MAX rule.\n- fact_sales stores $141.61 on all 19 transacted P005 sales lines because revenue comes from point-of-sale transactions.csv.\n- Rationale: Master catalog price changes post-date the sales window; fact revenue must reflect historical transacted price, not catalog list price.",
+      talkingPoints: [
+        "Master catalog updates must never post-actively reprice historical POS transaction lines.",
+        "MAX rule is order-independent: re-sorting the CSV extract cannot change dim_product values.",
+        "Prevents laundering fact transaction data into master catalog dimension attributes.",
+      ],
+      codeRef: "src/cleaning/products.py:resolve_price_conflicts",
+      codeSnippet: "elected_price = max(prices)\ndim_product['list_unit_price'] = elected_price",
+      codeAnnotations: [
+        { lineRange: "Line 1-2", title: "Deterministic MAX Policy", description: "Elects maximum list price for dim_product without altering fact_sales transacted prices." }
+      ],
+      keywords: ["pr-02", "price", "catalog", "fact_sales", "p005", "max", "survivorship"]
+    },
+    {
+      label: "⚡ ST-02 Store Survivorship Rule",
+      defectCode: "ST-02",
+      question: "How does the store survivorship rule for S007 avoid non-reproducible keep='first' behavior?",
+      answer: "ST-02 (Near-Duplicate Primary Key) handling:\n- Store S007 appears twice with conflicting store names ('Downtown Rochester' vs 'Rochester Downtown').\n- Decision: Apply a 3-stage deterministic survivorship rule: (1) fewest nulls, (2) earliest opened_date, (3) lexicographically first store_name.\n- Outcome: Elects 'Downtown Rochester'. The losing row and reason are recorded in the audit ledger.\n- Rationale: drop_duplicates(keep='first') depends on CSV row order; a re-sorted file silently changes the winner. A 3-stage rule is 100% deterministic.",
+      talkingPoints: [
+        "Eliminates dependency on arbitrary CSV row order during ingest.",
+        "Elects 'Downtown Rochester' deterministically across all environment re-runs.",
+        "Losing variant and disposition reason are preserved in audit_report.json.",
+      ],
+      codeRef: "src/cleaning/stores.py:resolve_store_survivorship",
+      codeSnippet: "sort_keys = ['null_count', 'opened_date', 'store_name']\nsurvivor = group.sort_values(sort_keys).iloc[0]",
+      codeAnnotations: [
+        { lineRange: "Line 1-2", title: "3-Stage Survivorship", description: "Orders candidates by null count, opened date, and name for 100% deterministic master selection." }
+      ],
+      keywords: ["st-02", "survivorship", "store", "s007", "duplicate", "rochester"]
+    },
+    {
+      label: "⚡ TX-10 Return Rate Metric Choice",
+      defectCode: "TX-10",
+      question: "How are return transactions (TX-10) modeled, and why emit both unit-based and txn-based rates?",
+      answer: "TX-10 (Return Transactions) handling:\n- 30 return rows carry negative quantity and negative total_amount.\n- Decision: Preserved in fact_sales as signed negative rows with is_return = True.\n- Analytics: Dashboard emits both Unit Return Rate (returned units / total units) and Txn Return Rate (return txns / total txns).\n- Example: Store S006 has a 13.73% unit return rate vs a 12.50% txn return rate.\n- Rationale: Storing signed negatives makes SUM(net_amount) equal net revenue without joins or special cases, while exposing both metrics resolves retail definition ambiguity.",
+      talkingPoints: [
+        "Signed negative rows allow SUM(net_amount) to calculate net revenue natively.",
+        "Exposing unit-based (13.73%) and txn-based (12.50%) rates makes definitional trade-offs visible.",
+        "Avoids filtering out negative returns, which would overstate net sales revenue.",
+      ],
+      codeRef: "src/cleaning/transactions.py:flag_returns",
+      codeSnippet: "fact_sales['is_return'] = (quantity < 0) & (total_amount < 0)\nfact_sales['net_amount'] = total_amount",
+      codeAnnotations: [
+        { lineRange: "Line 1-2", title: "Sign-Preserving Fact Load", description: "Preserves negative sign for returns and flags is_return = True for multi-grain analytics." }
+      ],
+      keywords: ["tx-10", "returns", "unit_return_rate", "txn_return_rate", "s006", "signed"]
+    },
+    {
+      label: "⚡ Pinned Date vs Clock Drift",
+      defectCode: "TX-08",
+      question: "Why is AS_OF_DATE = 2026-06-02 hard-pinned, and what breaks if datetime.now() is used?",
+      answer: "Reference Date & Clock Drift (TX-08) handling:\n- The pipeline anchors all time-relative metrics on AS_OF_DATE = 2026-06-02 (the seed data reference date).\n- TX-08 flags 3 transactions dated +8, +16, and +25 days in the future as clock drift.\n- If datetime.now() were used instead: (1) trailing 30-day windows would go empty as calendar time passes, and (2) future-dated TX-08 transactions would silently turn into valid sales over time.\n- Rationale: Hard-pinning AS_OF_DATE guarantees 100% byte-reproducible pipeline outputs forever.",
+      talkingPoints: [
+        "Guarantees 100% byte-for-byte reproducible runs regardless of execution date.",
+        "Prevents future-dated POS clock drift transactions from silently converting into valid sales.",
+        "Ensures trailing 30-day window metrics ([2026-05-04 to 2026-06-02]) remain populated.",
+      ],
+      codeRef: "src/config.py:RunConfig",
+      codeSnippet: "AS_OF_DATE = date(2026, 6, 2)\nrecent_window_start = AS_OF_DATE - timedelta(days=29)",
+      codeAnnotations: [
+        { lineRange: "Line 1-2", title: "Pinned Time Horizon", description: "Pins reference horizon to 2026-06-02 for 100% reproducible trailing analytics." }
+      ],
+      keywords: ["as_of_date", "clock_drift", "tx-08", "datetime.now", "window", "reproducible"]
+    }
+  ];
+}
+
 /**
  * Build the full scripted answer set for a bundle: run summary, 17 defect
  * classes in catalog order, then one per analytics metric.
@@ -306,7 +397,9 @@ export function buildScriptedAnswers(bundle: Bundle): ScriptedAnswer[] {
     .map((id) => metricAnswer(bundle, id))
     .filter((m): m is ScriptedAnswer => m !== null);
 
-  return [runSummaryAnswer(facts), ...defects, ...metrics];
+  const tradeoffs = tradeoffAnswers(bundle, facts);
+
+  return [runSummaryAnswer(facts), ...tradeoffs, ...defects, ...metrics];
 }
 
 /**
