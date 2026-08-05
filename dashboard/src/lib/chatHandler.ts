@@ -880,7 +880,7 @@ async function callModelWithFallback(
       return {
         kind: "failed",
         errorKind: "upstream_error",
-        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}.`,
+        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}. Detail: ${detail}`,
         resolution: resolution(),
       };
     }
