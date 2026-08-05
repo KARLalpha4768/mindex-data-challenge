@@ -125,10 +125,7 @@ const GEMINI_API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
  * No key in the URL: it goes in `x-goog-api-key`, same as generateContent.
  */
 const LIST_MODELS_URL = `${GEMINI_API_ROOT}/models?pageSize=1000`;
-
-function generateContentUrl(model: string): string {
-  return `${GEMINI_API_ROOT}/models/${model}:generateContent`;
-}
+const INTERACTIONS_URL = `${GEMINI_API_ROOT}/interactions`;
 
 /* ── Cost and abuse envelope ──────────────────────────────────────────────
  * Every one of these is a spend control as much as a safety control. The
@@ -396,6 +393,12 @@ async function runDiscovery(
   deps: ChatDeps,
   budgetMs: number,
 ): Promise<Discovery> {
+  if (apiKey.startsWith("AQ.")) {
+    return unavailableDiscovery(
+      "ListModels skipped: AQ. prefix API keys are not supported by the legacy ListModels endpoint.",
+    );
+  }
+
   if (budgetMs < DISCOVERY_MIN_BUDGET_MS) {
     return unavailableDiscovery(
       "ListModels skipped: too little of the request timeout budget remained to spend on it.",
@@ -618,21 +621,14 @@ function retryDelayMs(res: Response, attempt: number, random: () => number): num
 
 /* ── POST: the grounded answer ────────────────────────────────────────────── */
 
-interface GeminiPart {
-  text?: string;
-  thought?: boolean;
-}
-
 interface GeminiResponseShape {
-  candidates?: Array<{
-    content?: { parts?: GeminiPart[] };
-    finishReason?: string;
-  }>;
-  promptFeedback?: { blockReason?: string };
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    totalTokenCount?: number;
+  id?: string;
+  status?: string;
+  output_text?: string;
+  token_usage?: {
+    prompt_token_count?: number;
+    candidates_token_count?: number;
+    total_token_count?: number;
   };
 }
 
@@ -657,7 +653,7 @@ type CallOutcome =
  */
 async function callModelWithFallback(
   apiKey: string,
-  payload: unknown,
+  payload: Record<string, unknown>,
   deps: ChatDeps,
 ): Promise<CallOutcome> {
   const now = deps.now ?? (() => Date.now());
@@ -718,13 +714,13 @@ async function callModelWithFallback(
 
       let upstream: Response;
       try {
-        upstream = await deps.fetchImpl(generateContentUrl(model), {
+        upstream = await deps.fetchImpl(INTERACTIONS_URL, {
           method: "POST",
           headers: {
             "content-type": "application/json",
             "x-goog-api-key": apiKey,
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ ...payload, model }),
           signal: AbortSignal.timeout(budget),
         });
       } catch (err) {
@@ -933,16 +929,6 @@ export function handleChatStatus(deps: ChatDeps = defaultDeps): Response {
   });
 }
 
-/** Finish reasons that mean "the model was stopped", not "the model finished". */
-const BLOCKING_FINISH_REASONS = new Set([
-  "SAFETY",
-  "RECITATION",
-  "BLOCKLIST",
-  "PROHIBITED_CONTENT",
-  "SPII",
-  "IMAGE_SAFETY",
-]);
-
 export async function handleChatPost(
   request: Request,
   deps: ChatDeps = defaultDeps,
@@ -1037,17 +1023,15 @@ export async function handleChatPost(
     `----\nQUESTION: ${question}`;
 
   const payload = {
-    systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-    contents: [
-      ...history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
-      { role: "user", parts: [{ text: userTurn }] },
-    ],
-    generationConfig: {
+    config: {
+      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
       temperature: TEMPERATURE,
       topP: 0.9,
       candidateCount: 1,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     },
+    input: { text: userTurn },
+    contents: history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
   };
 
   /* 6. Call upstream: discovery, candidate chain, bounded retry. Key in a
@@ -1065,45 +1049,23 @@ export async function handleChatPost(
 
   /* 7. Interpret the candidate. A safety block is NOT an error to swallow —
    *    the client says so explicitly rather than presenting silence as an answer. */
-  const blockReason = data.promptFeedback?.blockReason;
-  if (blockReason) {
-    return fail("blocked", `The model declined to answer this prompt (reason: ${blockReason}).`, {
+  if (data.status && data.status !== "COMPLETED" && data.status !== "PROCESSING") {
+    return fail("blocked", `The model declined to answer this prompt (status: ${data.status}).`, {
       resolution: outcome.resolution,
     });
   }
 
-  const candidate = data.candidates?.[0];
-  const finishReason = candidate?.finishReason ?? "";
-  if (BLOCKING_FINISH_REASONS.has(finishReason)) {
-    return fail(
-      "blocked",
-      `The model stopped before answering (finish reason: ${finishReason}).`,
-      { resolution: outcome.resolution },
-    );
-  }
-
-  // Gemini 3 models may return internal reasoning parts alongside the answer;
-  // those carry `thought: true` and must not be shown to a reviewer as output.
-  const answerText = (candidate?.content?.parts ?? [])
-    .filter((p) => p.thought !== true && typeof p.text === "string")
-    .map((p) => p.text as string)
-    .join("")
-    .trim();
+  const answerText = (data.output_text ?? "").trim();
 
   if (!answerText) {
     return fail(
       "empty_response",
-      finishReason === "MAX_TOKENS"
-        ? "The model hit its output limit before producing an answer. Try a narrower question."
-        : "The model returned no text.",
+      "The model returned no text.",
       { resolution: outcome.resolution },
     );
   }
 
-  const answer =
-    finishReason === "MAX_TOKENS"
-      ? `${answerText}\n\n[Answer truncated at the ${MAX_OUTPUT_TOKENS}-token output cap.]`
-      : answerText;
+  const answer = answerText;
 
   /* 8. Numeric self-audit. The system instruction forbids stating a figure that
    *    is not in the context; this is the part that CHECKS rather than asks.
@@ -1131,9 +1093,9 @@ export async function handleChatPost(
     audit,
     resolution: outcome.resolution,
     usage: {
-      promptTokens: data.usageMetadata?.promptTokenCount,
-      responseTokens: data.usageMetadata?.candidatesTokenCount,
-      totalTokens: data.usageMetadata?.totalTokenCount,
+      promptTokens: data.token_usage?.prompt_token_count,
+      responseTokens: data.token_usage?.candidates_token_count,
+      totalTokens: data.token_usage?.total_token_count,
     },
   });
 }

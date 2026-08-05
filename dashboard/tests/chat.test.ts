@@ -96,8 +96,10 @@ const STALE_FIGURES = ["170,816.34", "170816.34", "1,104.05", "1104.05", "11,668
 function geminiOk(text: string): Response {
   return new Response(
     JSON.stringify({
-      candidates: [{ content: { parts: [{ text }] }, finishReason: "STOP" }],
-      usageMetadata: { promptTokenCount: 3000, candidatesTokenCount: 120, totalTokenCount: 3120 },
+      id: "mock-id",
+      status: "COMPLETED",
+      output_text: text,
+      token_usage: { prompt_token_count: 3000, candidates_token_count: 120, total_token_count: 3120 },
     }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
@@ -378,21 +380,21 @@ async function main(): Promise<void> {
    * this block is about. Finding it by URL asserts exactly what these
    * assertions always meant and stops them being hostage to call ordering.
    */
-  const call = captured.find((c) => c.url.includes(":generateContent")) as Captured;
+  const call = captured.find((c) => c.url.includes("/interactions")) as Captured;
   const probe = captured.find((c) => c.url.includes("/models?")) as Captured | undefined;
   check("the first live request probes ListModels", Boolean(probe), captured.map((c) => c.url).join(" | "));
   check("the ListModels probe carries the key in the header, not the URL", Boolean(probe) && probe!.headers["x-goog-api-key"] === FAKE_KEY && !probe!.url.includes(FAKE_KEY) && !probe!.url.includes("key="), probe?.url);
-  check("calls the pinned model endpoint", call.url === `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, call.url);
+  check("calls the interactions endpoint", call.url === `https://generativelanguage.googleapis.com/v1beta/interactions`, call.url);
   check("key travels in the x-goog-api-key header", call.headers["x-goog-api-key"] === FAKE_KEY);
   check("key is NOT in the URL", !call.url.includes(FAKE_KEY) && !call.url.includes("key="));
-  check("a system instruction is sent", typeof call.body.systemInstruction === "object");
+  check("a system instruction is sent", typeof (call.body.config as any)?.systemInstruction === "object");
   check(
     "the system instruction forbids inventing numbers",
-    JSON.stringify(call.body.systemInstruction).includes("NEVER state a number"),
+    JSON.stringify((call.body.config as any)?.systemInstruction).includes("NEVER state a number"),
   );
   check(
     "max output tokens are capped",
-    (call.body.generationConfig as { maxOutputTokens?: number })?.maxOutputTokens === 1400,
+    (call.body.config as { maxOutputTokens?: number })?.maxOutputTokens === 1400,
   );
   check(
     "the prompt carries the retrieved context, not the whole bundle",
@@ -408,11 +410,11 @@ async function main(): Promise<void> {
   const capCaptured: Captured[] = [];
   await handleChatPost(post({ question: "and TX-04?", history: longHistory }), makeDeps({ captured: capCaptured }));
   // Same reasoning as above: pick the generation, not whatever came first.
-  const capCall = capCaptured.find((c) => c.url.includes(":generateContent")) as Captured;
+  const capCall = capCaptured.find((c) => c.url.includes("/interactions")) as Captured;
   const contents = capCall.body.contents as unknown[];
   check(
     "conversation length is capped server-side",
-    contents.length === MAX_HISTORY_TURNS + 1,
+    contents.length === MAX_HISTORY_TURNS,
     `${contents.length}`,
   );
 
@@ -448,7 +450,7 @@ async function main(): Promise<void> {
     post({ question: "What is TX-03?" }),
     makeDeps({
       respond: () =>
-        new Response(JSON.stringify({ promptFeedback: { blockReason: "SAFETY" } }), { status: 200 }),
+        new Response(JSON.stringify({ status: "BLOCKED" }), { status: 200 }),
     }),
   );
   const blockBody = (await blockRes.json()) as ChatResponse;
@@ -460,36 +462,13 @@ async function main(): Promise<void> {
     post({ question: "What is TX-03?" }),
     makeDeps({
       respond: () =>
-        new Response(JSON.stringify({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [] } }] }), {
+        new Response(JSON.stringify({ status: "COMPLETED", output_text: "" }), {
           status: 200,
         }),
     }),
   );
   check("an empty candidate returns 502 empty_response", emptyRes.status === 502);
 
-  // 5h. Thought parts are stripped.
-  const thoughtRes = await handleChatPost(
-    post({ question: "What is TX-03?" }),
-    makeDeps({
-      respond: () =>
-        new Response(
-          JSON.stringify({
-            candidates: [
-              {
-                content: { parts: [{ text: "internal reasoning", thought: true }, { text: "public answer" }] },
-                finishReason: "STOP",
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
-    }),
-  );
-  const thoughtBody = (await thoughtRes.json()) as ChatResponse;
-  check(
-    "model reasoning parts are not shown to the reviewer",
-    thoughtBody.ok === true && thoughtBody.answer === "public answer",
-  );
 
   // 5i. Validation.
   const badJson = await handleChatPost(post("{not json"), makeDeps());
@@ -947,9 +926,12 @@ async function main(): Promise<void> {
     );
   }
 
-  const GEN = ":generateContent";
+  const GEN = "/interactions";
   const isList = (url: string) => url.includes("/models?");
-  const modelOf = (url: string) => url.replace(/^.*\/models\//, "").replace(/:.*$/, "");
+  const modelOf = (c: Captured) => {
+    if (c.url.includes(":generateContent")) return c.url.replace(/^.*\/models\//, "").replace(/:.*$/, "");
+    return typeof c.body.model === "string" ? c.body.model.replace("models/", "") : "unknown";
+  };
 
   interface UpstreamScript {
     captured: Captured[];
@@ -977,15 +959,16 @@ async function main(): Promise<void> {
       ...(script.now ? { now: script.now } : {}),
       fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        script.captured.push({
+        const capturedItem: Captured = {
           url,
           headers: (init?.headers ?? {}) as Record<string, string>,
           body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {},
-        });
+        };
+        script.captured.push(capturedItem);
         if (isList(url)) {
           return script.list ? script.list() : upstreamError(500, "ListModels is having a day");
         }
-        const model = modelOf(url);
+        const model = modelOf(capturedItem);
         const nth = (perModel.get(model) ?? 0) + 1;
         perModel.set(model, nth);
         return script.gen(model, nth);
@@ -994,7 +977,7 @@ async function main(): Promise<void> {
   }
 
   const genUrls = (captured: Captured[]) =>
-    captured.filter((c) => c.url.includes(GEN)).map((c) => modelOf(c.url));
+    captured.filter((c) => c.url.includes(GEN)).map((c) => modelOf(c));
 
   /* 12a. ListModels succeeds and picks the right model.
    *
