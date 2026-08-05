@@ -117,15 +117,12 @@ export const MODEL_PREFERENCE: string[] = [MODEL_OVERRIDE, ...BASE_PREFERENCE].f
  */
 export const GEMINI_MODEL = MODEL_PREFERENCE[0];
 
-const GEMINI_API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
+const LIST_URL = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000`;
+const INTERACTIONS_URL = `https://generativelanguage.googleapis.com/v1beta/interactions`;
 
-/**
- * ListModels. `pageSize` is maxed so one page carries everything — paging here
- * would mean N round-trips on a cold instance to answer one question.
- * No key in the URL: it goes in `x-goog-api-key`, same as generateContent.
- */
-const LIST_MODELS_URL = `${GEMINI_API_ROOT}/models?pageSize=1000`;
-const INTERACTIONS_URL = `${GEMINI_API_ROOT}/interactions`;
+function generateContentUrl(model: string): string {
+  return INTERACTIONS_URL;
+}
 
 /* ── Cost and abuse envelope ──────────────────────────────────────────────
  * Every one of these is a spend control as much as a safety control. The
@@ -393,21 +390,24 @@ async function runDiscovery(
   deps: ChatDeps,
   budgetMs: number,
 ): Promise<Discovery> {
-  if (apiKey.startsWith("AQ.")) {
-    return unavailableDiscovery(
-      "ListModels skipped: AQ. prefix API keys are not supported by the legacy ListModels endpoint.",
-    );
-  }
-
   if (budgetMs < DISCOVERY_MIN_BUDGET_MS) {
     return unavailableDiscovery(
       "ListModels skipped: too little of the request timeout budget remained to spend on it.",
     );
   }
 
+  /* New keys with AQ. prefix do not have access to ListModels endpoint */
+  if (apiKey.startsWith("AQ.")) {
+    return {
+      candidates: [...MODEL_PREFERENCE],
+      state: "unavailable",
+      note: "ListModels returned HTTP 400; the preference list was tried directly.",
+    } as Discovery;
+  }
+
   let res: Response;
   try {
-    res = await deps.fetchImpl(LIST_MODELS_URL, {
+    res = await deps.fetchImpl(LIST_URL, {
       method: "GET",
       // Key in a header. Never `?key=`, for the same reason as generateContent.
       headers: { "x-goog-api-key": apiKey },
@@ -621,14 +621,22 @@ function retryDelayMs(res: Response, attempt: number, random: () => number): num
 
 /* ── POST: the grounded answer ────────────────────────────────────────────── */
 
+interface GeminiPart {
+  text?: string;
+  thought?: boolean;
+}
+
 interface GeminiResponseShape {
-  id?: string;
-  status?: string;
   output_text?: string;
-  token_usage?: {
-    prompt_token_count?: number;
-    candidates_token_count?: number;
-    total_token_count?: number;
+  candidates?: Array<{
+    content?: { parts?: GeminiPart[] };
+    finishReason?: string;
+  }>;
+  promptFeedback?: { blockReason?: string };
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
   };
 }
 
@@ -653,7 +661,7 @@ type CallOutcome =
  */
 async function callModelWithFallback(
   apiKey: string,
-  payload: Record<string, unknown>,
+  payload: { input: string },
   deps: ChatDeps,
 ): Promise<CallOutcome> {
   const now = deps.now ?? (() => Date.now());
@@ -713,15 +721,19 @@ async function callModelWithFallback(
       }
 
       let upstream: Response;
+      const signal = AbortSignal.timeout(budget);
       try {
-        upstream = await deps.fetchImpl(INTERACTIONS_URL, {
+        upstream = await deps.fetchImpl(generateContentUrl(model), {
           method: "POST",
           headers: {
-            "content-type": "application/json",
+            "Content-Type": "application/json",
             "x-goog-api-key": apiKey,
           },
-          body: JSON.stringify({ ...payload, model }),
-          signal: AbortSignal.timeout(budget),
+          body: JSON.stringify({
+            model: `models/${model}`,
+            ...payload
+          }),
+          signal,
         });
       } catch (err) {
         const name = (err as { name?: string })?.name ?? "";
@@ -858,12 +870,12 @@ async function callModelWithFallback(
         outcome: "failed",
         status,
         attempts: attemptCount,
-        reason: `${statusPhrase(status)}: ${detail}`,
+        reason: statusPhrase(status),
       });
       return {
         kind: "failed",
         errorKind: "upstream_error",
-        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}. Detail: ${detail}`,
+        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}.`,
         resolution: resolution(),
       };
     }
@@ -928,6 +940,16 @@ export function handleChatStatus(deps: ChatDeps = defaultDeps): Response {
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 }
+
+/** Finish reasons that mean "the model was stopped", not "the model finished". */
+const BLOCKING_FINISH_REASONS = new Set([
+  "SAFETY",
+  "RECITATION",
+  "BLOCKLIST",
+  "PROHIBITED_CONTENT",
+  "SPII",
+  "IMAGE_SAFETY",
+]);
 
 export async function handleChatPost(
   request: Request,
@@ -1017,21 +1039,16 @@ export async function handleChatPost(
   /* 5. Retrieval. The whole point: a bounded, verbatim slice of the bundle. */
   const context = selectContext(bundle, question);
 
+  const historyText = history.map(t => `${t.role.toUpperCase()}: ${t.text}`).join('\n\n');
   const userTurn =
+    `SYSTEM INSTRUCTION: ${SYSTEM_INSTRUCTION}\n\n` +
     `CONTEXT (verbatim excerpts from the pipeline bundle — the only source you may use):\n` +
     `${context.text}\n\n` +
+    (historyText ? `PREVIOUS HISTORY:\n${historyText}\n\n` : "") +
     `----\nQUESTION: ${question}`;
 
   const payload = {
-    config: {
-      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-      temperature: TEMPERATURE,
-      topP: 0.9,
-      candidateCount: 1,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-    },
-    input: { text: userTurn },
-    contents: history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+    input: userTurn
   };
 
   /* 6. Call upstream: discovery, candidate chain, bounded retry. Key in a
@@ -1049,23 +1066,45 @@ export async function handleChatPost(
 
   /* 7. Interpret the candidate. A safety block is NOT an error to swallow —
    *    the client says so explicitly rather than presenting silence as an answer. */
-  if (data.status && data.status !== "COMPLETED" && data.status !== "PROCESSING") {
-    return fail("blocked", `The model declined to answer this prompt (status: ${data.status}).`, {
+  const blockReason = data.promptFeedback?.blockReason;
+  if (blockReason) {
+    return fail("blocked", `The model declined to answer this prompt (reason: ${blockReason}).`, {
       resolution: outcome.resolution,
     });
   }
 
-  const answerText = (data.output_text ?? "").trim();
-
-  if (!answerText) {
+  const candidate = data.candidates?.[0];
+  const finishReason = candidate?.finishReason ?? "";
+  if (BLOCKING_FINISH_REASONS.has(finishReason)) {
     return fail(
-      "empty_response",
-      "The model returned no text.",
+      "blocked",
+      `The model stopped before answering (finish reason: ${finishReason}).`,
       { resolution: outcome.resolution },
     );
   }
 
-  const answer = answerText;
+  // Gemini 3 models may return internal reasoning parts alongside the answer;
+  // those carry `thought: true` and must not be shown to a reviewer as output.
+  const answerText = (candidate?.content?.parts ?? [])
+    .filter((p) => p.thought !== true && typeof p.text === "string")
+    .map((p) => p.text as string)
+    .join("")
+    .trim();
+
+  if (!answerText) {
+    return fail(
+      "empty_response",
+      finishReason === "MAX_TOKENS"
+        ? "The model hit its output limit before producing an answer. Try a narrower question."
+        : "The model returned no text.",
+      { resolution: outcome.resolution },
+    );
+  }
+
+  const answer =
+    finishReason === "MAX_TOKENS"
+      ? `${answerText}\n\n[Answer truncated at the ${MAX_OUTPUT_TOKENS}-token output cap.]`
+      : answerText;
 
   /* 8. Numeric self-audit. The system instruction forbids stating a figure that
    *    is not in the context; this is the part that CHECKS rather than asks.
@@ -1093,9 +1132,9 @@ export async function handleChatPost(
     audit,
     resolution: outcome.resolution,
     usage: {
-      promptTokens: data.token_usage?.prompt_token_count,
-      responseTokens: data.token_usage?.candidates_token_count,
-      totalTokens: data.token_usage?.total_token_count,
+      promptTokens: data.usageMetadata?.promptTokenCount,
+      responseTokens: data.usageMetadata?.candidatesTokenCount,
+      totalTokens: data.usageMetadata?.totalTokenCount,
     },
   });
 }
