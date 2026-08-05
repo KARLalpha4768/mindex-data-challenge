@@ -139,7 +139,7 @@ function generateContentUrl(model: string): string {
 /** Per-IP request allowance and window. ~1 question every 15s sustained. */
 const RATE_LIMIT = { limit: 20, windowMs: 5 * 60 * 1000 };
 /** Upper bound on generated tokens — bounds the output half of the bill. */
-const MAX_OUTPUT_TOKENS = 1400;
+const MAX_OUTPUT_TOKENS = 3200;
 /**
  * The WHOLE budget for one request's dealings with Google: discovery, every
  * candidate, and every retry between them. Not per-call. A serverless function
