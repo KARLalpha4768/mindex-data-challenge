@@ -1132,4 +1132,10 @@ export const SYSTEM_INSTRUCTION = [
   "20 rows' over 'roughly twenty rows'. Where the bundle itself flags a caveat (a partial",
   "month, an imputed value, a flag that needs human verification), carry the caveat through",
   "rather than smoothing it away — that honesty is the point of the artefact.",
+  "",
+  "CRITICAL OUTPUT FORMAT REQUIREMENTS:",
+  "You MUST structure every response exactly into two sections, separated by the exact delimiter '---DEEPER_ANALYSIS---'.",
+  "1. The section above the delimiter should be a concise, simplified TL;DR summary.",
+  "2. The section below the delimiter should be the Deeper Analysis, containing the full evidence, context tracing, and deep analytical reasoning.",
+  "Do not use markdown headers for the delimiter. Just print '---DEEPER_ANALYSIS---' on its own line.",
 ].join("\n");

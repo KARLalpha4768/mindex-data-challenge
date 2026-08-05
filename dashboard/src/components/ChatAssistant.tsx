@@ -231,6 +231,52 @@ function AuditNote({ audit }: { audit: NumericAudit }) {
   );
 }
 
+function LinkedText({
+  text,
+  knownCodes,
+  onSelectDefect,
+}: {
+  text: string;
+  knownCodes: Set<string>;
+  onSelectDefect?: (code: string) => void;
+}) {
+  const LINK_RE = /\b(ST-\d{2}|PR-\d{2}|TX-\d{2})\b/gi;
+  const parts = text.split(LINK_RE);
+
+  if (parts.length === 1) return <>{text}</>;
+
+  return (
+    <>
+      {parts.map((part, i) => {
+        // Every odd index in the split result is a captured group match (a defect code)
+        if (i % 2 !== 0) {
+          const code = part.toUpperCase();
+          if (knownCodes.has(code) && onSelectDefect) {
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => onSelectDefect(code)}
+                className="font-mono font-semibold text-accent hover:underline focus:outline-none"
+                title={`View ${code} in Defect Explorer`}
+              >
+                {part}
+              </button>
+            );
+          } else {
+            return (
+              <span key={i} className="font-mono text-ink-dim">
+                {part}
+              </span>
+            );
+          }
+        }
+        return <React.Fragment key={i}>{part}</React.Fragment>;
+      })}
+    </>
+  );
+}
+
 export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [inputQuery, setInputQuery] = React.useState("");
@@ -896,8 +942,36 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
                       />
                       {m.text}
                     </p>
+                  ) : m.text.includes("---DEEPER_ANALYSIS---") ? (
+                    <div className="text-sm leading-relaxed">
+                      <div className="whitespace-pre-wrap">
+                        <LinkedText
+                          text={m.text.split("---DEEPER_ANALYSIS---")[0].trim()}
+                          knownCodes={knownCodes}
+                          onSelectDefect={onSelectDefect}
+                        />
+                      </div>
+                      <details className="mt-4 rounded-lg border border-line/60 bg-panel/30 p-4">
+                        <summary className="cursor-pointer font-semibold text-accent hover:underline">
+                          Read Deeper Analysis
+                        </summary>
+                        <div className="mt-3 whitespace-pre-wrap">
+                          <LinkedText
+                            text={m.text.split("---DEEPER_ANALYSIS---")[1].trim()}
+                            knownCodes={knownCodes}
+                            onSelectDefect={onSelectDefect}
+                          />
+                        </div>
+                      </details>
+                    </div>
                   ) : (
-                    <div className="whitespace-pre-wrap text-sm leading-relaxed">{m.text}</div>
+                    <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                      <LinkedText
+                        text={m.text}
+                        knownCodes={knownCodes}
+                        onSelectDefect={onSelectDefect}
+                      />
+                    </div>
                   )}
 
                   {m.talkingPoints && m.talkingPoints.length > 0 && (
