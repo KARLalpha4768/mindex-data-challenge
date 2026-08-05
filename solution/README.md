@@ -3,6 +3,36 @@
 Raw CSV → profiled → audited cleaning → SQLite star schema → six SQL metrics, with a runtime proof
 that all 17 seeded data defects were found.
 
+**This file is the canonical reviewer guide.** Every number in it is asserted against a live run by
+`solution/scripts/check_readme_numbers.py`, which is itself run by the verification command below —
+so if a figure here has gone stale, the build fails rather than the document lying quietly.
+
+## Start here
+
+| | |
+|---|---|
+| **The submission** | [`solution/`](solution/) — `src/`, `tests/`, `data/raw/`, `scripts/`, `output/` |
+| **The dashboard** | [`dashboard/`](dashboard/) — Next.js evidence viewer over the same artifacts |
+| **Verify all of it** | `python scripts/verify_submission.py` — one command, no arguments |
+
+```bash
+pip install -r requirements.txt
+python scripts/verify_submission.py
+```
+
+That single command runs the full pipeline into a temporary directory, runs the
+<!-- fig:test_count -->87<!-- /fig -->-test suite, re-checks every published figure in this document
+and in `solution/README.md` against the artifacts it just produced, and then independently
+re-derives the headline numbers from the raw CSVs and the warehouse using nothing but the standard
+library. It prints a pass/fail table and exits non-zero if anything disagrees. Expect it to take
+under a minute.
+
+> **A note on the two `src/` directories.** `src/` and `tests/` **at the repository root are
+> superseded** — they are this project's first attempt, kept for history, and every module in them
+> raises on import with a pointer to the right path. The submitted implementation is
+> `solution/src/` and `solution/tests/`. The reasoning is in
+> [Repository layout](#repository-layout) at the end of this document.
+
 ## What the challenge asked, and what this does
 
 The challenge supplies three deliberately dirty CSVs (`stores`, `products`, `transactions`) and asks
@@ -37,26 +67,40 @@ classes detected with <!-- fig:defect_mismatches -->0<!-- /fig --> count mismatc
 
 ## Quickstart
 
-From a fresh clone, inside `solution/`:
+From a fresh clone, at the repository root:
 
 ```bash
-pip install -r requirements.txt          # pandas + numpy; everything else is stdlib
-pip install pytest                       # test suite only
+pip install -r requirements.txt          # pandas + numpy + pytest; everything else is stdlib
+python scripts/verify_submission.py      # pipeline + tests + doc gate + independent assertions
+```
 
-python -m src.pipeline                   # full run -> ./output
+To drive the stages by hand instead, work inside `solution/` — that is where `src` is importable
+from:
+
+```bash
+cd solution
+python -m src.pipeline                   # full run -> solution/output
 python -m pytest -q                      # 87 tests
-python scripts/check_readme_numbers.py   # assert this README against the run
+python scripts/check_readme_numbers.py --readme ../README.md   # assert THIS file against the run
+python scripts/check_readme_numbers.py                         # and solution/README.md too
 ```
 
-To write artifacts somewhere else (recommended if the repo lives on a read-only or sync-backed
-mount):
+To write artifacts somewhere other than `solution/output`:
 
 ```bash
+cd solution
 python -m src.pipeline --output-dir /tmp/run
-python scripts/check_readme_numbers.py --output-dir /tmp/run
+python scripts/check_readme_numbers.py --output-dir /tmp/run --readme ../README.md
 ```
 
-Useful flags: `--as-of YYYY-MM-DD` (reference date), `--raw-dir DIR`, `--skip-dashboard-export`.
+The test suite also runs from the repository root without changing directory:
+
+```bash
+python -m pytest solution/tests -q       # 87 tests
+```
+
+Useful pipeline flags: `--as-of YYYY-MM-DD` (reference date), `--raw-dir DIR`,
+`--skip-dashboard-export`.
 
 **Pipeline exit codes:** `0` all 17 defect classes detected with expected counts · `1` ran but the
 coverage proof failed · `2` raised an exception. The coverage gate is not advisory; a regression that
@@ -64,17 +108,17 @@ stops detecting TX-05 exits non-zero instead of quietly shipping a smaller fact 
 
 ### Artifacts produced
 
-| Path | What it is |
+| Path (relative to `solution/`) | What it is |
 |---|---|
-| `output/warehouse.db` | SQLite star schema, the analytics source of truth |
-| `output/analytics.json` | Six metrics with title, description, SQL, `sql_ref`, `definition_note`, `column_units`, rows |
-| `output/audit_report.json` | Decision ledger: per-defect detected counts, actions, affected keys, coverage proof |
-| `output/profile_report.json` | Pre-cleaning profile — evidence captured *before* anything was changed |
-| `output/defect_catalog.json` | The 17 specs (detection, decision, rationale, source ref) |
-| `output/cleaned/*.csv` | Diffable post-cleaning snapshots |
-| `output/quarantine/*.csv` | Every excluded or flagged row, one file per (dataset, defect) |
-| `output/quarantine/transactions__lineage.csv` | One row per source transaction — the 505-row budget proof |
-| `output/dashboard_bundle.json` | Everything the Next.js dashboard reads, in one file |
+| `solution/output/warehouse.db` | SQLite star schema, the analytics source of truth |
+| `solution/output/analytics.json` | Six metrics with title, description, SQL, `sql_ref`, `definition_note`, `column_units`, rows |
+| `solution/output/audit_report.json` | Decision ledger: per-defect detected counts, actions, affected keys, coverage proof |
+| `solution/output/profile_report.json` | Pre-cleaning profile — evidence captured *before* anything was changed |
+| `solution/output/defect_catalog.json` | The 17 specs (detection, decision, rationale, source ref) |
+| `solution/output/cleaned/*.csv` | Diffable post-cleaning snapshots |
+| `solution/output/quarantine/*.csv` | Every excluded or flagged row, one file per (dataset, defect) |
+| `solution/output/quarantine/transactions__lineage.csv` | One row per source transaction — the 505-row budget proof |
+| `solution/output/dashboard_bundle.json` | Everything the Next.js dashboard reads, in one file |
 
 ---
 
@@ -93,7 +137,7 @@ history as the calendar passes them. Pinning the date is what makes the run byte
 `[<!-- fig:window_start -->2026-05-04<!-- /fig -->, <!-- fig:as_of_date -->2026-06-02<!-- /fig -->]`,
 spanning <!-- fig:window_days -->30<!-- /fig --> calendar days and covering
 <!-- fig:window_rows -->181<!-- /fig --> fact rows. The start date is *derived* from `AS_OF_DATE` in
-`RunConfig.recent_window_start`, never hardcoded. This convention is load-bearing: reading it as
+`RunConfig.recent_window_start` (`solution/src/config.py`), never hardcoded. This convention is load-bearing: reading it as
 `[AS_OF − 30, AS_OF]` reorders the published #1 and #2 stores.
 
 Transaction data spans <!-- fig:first_date -->2026-03-05<!-- /fig --> to
@@ -164,7 +208,7 @@ Total source rows touched by at least one defect: <!-- fig:rows_affected -->178<
 discounted price, so `total_amount` is a **fact** and `quantity × unit_price` is a **derivation**.
 "Fixing" the fact to agree with the derivation inverts the direction of truth.
 
-`total_amount` is never recomputed anywhere in `src/` — the only textual matches are docstrings
+`total_amount` is never recomputed anywhere in `solution/src/` — the only textual matches are docstrings
 explaining why not. Instead the fact table carries three measures, so the discrepancy is *visible*:
 
 ```
@@ -192,9 +236,15 @@ The reconciliation metric exists to make the chain checkable by hand rather than
 | = Gross sales net of discount | <!-- fig:gross_net_of_discount -->$167,996.32<!-- /fig --> |
 | + Returns (TX-10) | <!-- fig:returns_value -->-$9,952.03<!-- /fig --> |
 | **= Net revenue** | **<!-- fig:net_revenue -->$158,044.29<!-- /fig -->** |
-| Reconciliation delta | <!-- fig:reconciliation_delta -->$0.00<!-- /fig --> |
+| Line-level delta | <!-- fig:line_level_delta -->$0.00<!-- /fig --> |
+| Aggregate delta | <!-- fig:aggregate_delta -->$0.00<!-- /fig --> |
 
-`reconciliation_delta` is `(SUM(net_amount WHERE is_return=0) + SUM(net_amount WHERE is_return=1) - SUM(net_amount))`, proving that sales minus returns equals total net revenue to the cent. If the 20 discounts had been recomputed away, `discount_total` would read $0.00 — this metric is the only place that absence would be visible.
+Both deltas are published because they are derived by different routes. `line_level_delta` is
+`SUM(extended_amount − discount_amount − net_amount)` over non-returns, computed from raw column
+values, so it fires as soon as any single row's money columns stop agreeing with one another.
+`aggregate_delta` recomputes the identity from the **rounded** figures printed above it, so the
+published table checks itself, rounding included. If the 20 discounts had been recomputed away,
+`discount_total` would read $0.00 — this metric is the only place that absence would be visible.
 
 Stated honestly: neither delta can detect a *uniform rescaling* of all money columns together,
 because that stays internally consistent. That case is caught elsewhere, by
@@ -259,7 +309,7 @@ vanish from every regional roll-up and understate the West.
 ## Row-budget reconciliation
 
 Every one of the <!-- fig:lineage_total -->505<!-- /fig --> source transaction rows is accounted for.
-`output/quarantine/transactions__lineage.csv` carries **one row per source row** with its
+`solution/output/quarantine/transactions__lineage.csv` carries **one row per source row** with its
 `source_row` ordinal, disposition, reason code and reported amount — so the budget is a file a
 reviewer can `GROUP BY`, not a claim.
 
@@ -297,7 +347,7 @@ computed 32 − 4 = 28 ≠ 30. Every quarantine CSV therefore carries a `disposi
 
 ## Warehouse schema
 
-SQLite star schema at `output/warehouse.db`. One fact, four conformed dimensions. Loaded dims → fact
+SQLite star schema at `solution/output/warehouse.db`. One fact, four conformed dimensions. Loaded dims → fact
 inside a **single transaction** with `PRAGMA foreign_keys = ON`; on any failure the whole load rolls
 back, so a partial database is never produced.
 
@@ -369,14 +419,14 @@ rejected probe insert, and the revenue tie-out differs by
 
 Money is stored as `REAL` rather than integer cents. That is a deliberate compromise: the source is
 2-decimal text, the analytics must reproduce reported totals exactly, and every comparison in the
-project is tolerance-based to the cent anyway — with the tolerance stated in `src/config.py` and
+project is tolerance-based to the cent anyway — with the tolerance stated in `solution/src/config.py` and
 applied in the CHECKs rather than assumed.
 
 ---
 
 ## Metric definitions
 
-All six live in `src/analytics/queries.py` as named SQL constants, execute against the warehouse (not
+All six live in `solution/src/analytics/queries.py` as named SQL constants, execute against the warehouse (not
 against DataFrames), and serialise with `title`, `description`, `sql`, `sql_ref`, `definition_note`
 and `column_units`. Every ratio is float-forced and every denominator is `NULLIF`-guarded.
 
@@ -484,7 +534,8 @@ Covered in full under TX-03 above.
 
 ## Testing
 
-<!-- fig:test_count -->87<!-- /fig --> tests, all passing. Run with `python -m pytest -q`.
+<!-- fig:test_count -->87<!-- /fig --> tests, all passing. Run with `python -m pytest solution/tests -q` from the repository root, or
+`python -m pytest -q` from inside `solution/`.
 
 | Module | What it defends |
 |---|---|
@@ -492,7 +543,7 @@ Covered in full under TX-03 above.
 | `test_analytics.py` | Metric SQL against a synthetic warehouse — sign handling, guest exclusion, threshold direction |
 | `test_metric_contracts.py` | The metric registry as an interface: required ids, `column_units` completeness, window-boundary arithmetic, and a **falsifiable** reconciliation delta |
 | `test_defect_gaps.py` | The codes the previous suite never asserted (TX-05, TX-09, PR-04) plus the untested robustness guards |
-| `test_golden_end_to_end.py` | The real `data/raw/` CSVs through the real pipeline with pinned numbers: 474 rows, $158,044.29, the exact top-5 ranking, 17/17 coverage |
+| `test_golden_end_to_end.py` | The real `solution/data/raw/` CSVs through the real pipeline with pinned numbers: 474 rows, $158,044.29, the exact top-5 ranking, 17/17 coverage |
 | `test_profiler.py` | Profiling primitives and null/type detection |
 
 ### Mutation testing — including what it found wrong
@@ -528,7 +579,7 @@ by MD5, the only diffs being output paths and timestamps.
 
 ---
 
-## Documentation integrity: `scripts/check_readme_numbers.py`
+## Documentation integrity: `solution/scripts/check_readme_numbers.py`
 
 An earlier revision of this README carried eight stale headline numbers — the top store, the top
 customer, and three of the four figures in the revenue reconciliation it presented as its own
@@ -547,20 +598,28 @@ Every checked figure above is wrapped in a pair of HTML comments, invisible in r
 
 The script extracts the literal text a human reads, normalises it, and compares it against a value
 resolved live from `analytics.json`, `audit_report.json`, the lineage CSV, the warehouse database,
-`src/config.py`, or a live `pytest` collection. The mapping from marker id to source of truth lives
+`solution/src/config.py`, or a live `pytest` collection. The mapping from marker id to source of truth lives
 in the script and **never in the README**, so a number cannot be verified against itself. It also
 fails if a registered figure stops being cited, because a marker broken during an edit is exactly how
 a figure quietly stops being checked.
 
 ```bash
-python scripts/check_readme_numbers.py                       # checks ./output
-python scripts/check_readme_numbers.py --output-dir /tmp/run
-python scripts/check_readme_numbers.py --list                # show the figure registry
-python scripts/check_readme_numbers.py -v                    # print every figure, not just failures
+cd solution
+python scripts/check_readme_numbers.py --readme ../README.md   # this document
+python scripts/check_readme_numbers.py                         # solution/README.md
+python scripts/check_readme_numbers.py --output-dir /tmp/run --readme ../README.md
+python scripts/check_readme_numbers.py --list                  # show the figure registry
+python scripts/check_readme_numbers.py -v                      # print every figure, not just failures
 ```
 
 Exit codes: `0` every figure current · `1` at least one stale, unknown or uncited · `2` artifacts
-missing (run the pipeline first). Wire it into CI directly after `pytest`.
+missing (run the pipeline first).
+
+**Both** documents are gated. `scripts/verify_submission.py` runs the check against this README and
+against `solution/README.md`, and then asserts that the two cite the *same set* of figure ids — so
+one cannot be updated while the other silently keeps an old number, and a figure cannot be dropped
+from one document to make a failure go away. Wire the same two invocations into CI directly after
+`pytest`.
 
 ---
 
@@ -589,7 +648,7 @@ missing (run the pipeline first). Wire it into CI directly after `pytest`.
    means the store master is stale, not that the transactions are bad. In production those rows park
    in a pending table and replay automatically when the dimension refreshes.
 2. **Thresholds move out of code.** `RETURN_RATE_ALERT_THRESHOLD`, `PRICE_TOLERANCE` and
-   `RECENT_WINDOW_DAYS` are already centralised in `src/config.py`; the next step is a config table
+   `RECENT_WINDOW_DAYS` are already centralised in `solution/src/config.py`; the next step is a config table
    the business owns, so changing the alert level is not a deployment.
 3. **The defect catalog becomes a monitored SLA.** `assert_all_expected_defects_found()` compares
    against counts known from the seed. Against live data those counts are unknown, so the same
@@ -605,32 +664,86 @@ missing (run the pipeline first). Wire it into CI directly after `pytest`.
 
 ---
 
-## Repository map
+## Repository layout
 
 ```
-src/
-  config.py            # paths, AS_OF_DATE, thresholds, shared vocabulary — one source of truth
-  defects.py           # the 17 specs: detection, decision, rationale, expected count
-  audit.py             # AuditLog, DefectRecord, the coverage proof
-  io_utils.py          # dtype=str CSV reads, atomic JSON writes
-  profiling/           # generic profiler + column-level checks (runs BEFORE cleaning)
-  cleaning/
-    rules.py           # shared date + currency parsers (TX-01, TX-02)
-    stores.py          # ST-01, ST-02, ST-03
-    products.py        # PR-01, PR-02, PR-03, PR-04
-    transactions.py    # TX-03 .. TX-10, plus the 505-row lineage file
-  warehouse/
-    schema.sql         # DDL, with the grain and every CHECK explained inline
-    loader.py          # dims -> fact, one transaction, FK + tie-out verification
-  analytics/
-    queries.py         # six named SQL constants + the metric registry
-    runner.py          # executes and serialises to analytics.json
-  pipeline.py          # six-stage orchestration + the coverage gate
-tests/                 # 87 tests, including a golden end-to-end run
+README.md                      <- you are here: the canonical reviewer guide
+requirements.txt               pandas, numpy, pytest
 scripts/
-  seed_data.py         # the generator that produced data/raw (unchanged)
-  check_readme_numbers.py  # documentation-integrity gate
+  verify_submission.py         the one command that proves this submission
+
+solution/                      ===== THE SUBMISSION =====
+  data/raw/                    the three supplied CSVs (unchanged)
+  scripts/
+    seed_data.py               the generator that produced data/raw (unchanged)
+    check_readme_numbers.py    documentation-integrity gate
+  src/
+    config.py                  paths, AS_OF_DATE, thresholds, shared vocabulary
+    defects.py                 the 17 specs: detection, decision, rationale, expected count
+    audit.py                   AuditLog, DefectRecord, the coverage proof
+    io_utils.py                dtype=str CSV reads, atomic JSON writes
+    profiling/                 generic profiler + column checks (runs BEFORE cleaning)
+    cleaning/
+      rules.py                 shared date + currency parsers (TX-01, TX-02)
+      stores.py                ST-01, ST-02, ST-03
+      products.py              PR-01, PR-02, PR-03, PR-04
+      transactions.py          TX-03 .. TX-10, plus the 505-row lineage file
+    warehouse/
+      schema.sql               DDL, with the grain and every CHECK explained inline
+      loader.py                dims -> fact, one transaction, FK + tie-out verification
+    analytics/
+      queries.py               six named SQL constants + the metric registry
+      runner.py                executes and serialises to analytics.json
+    pipeline.py                six-stage orchestration + the coverage gate
+  tests/                       87 tests, including a golden end-to-end run
+  output/                      generated artifacts
+  README.md                    the same document as this one, path-relative to solution/
+
+dashboard/                     Next.js evidence dashboard over solution/output/dashboard_bundle.json
+
+data/                          SUPERSEDED copy of solution/data/raw (byte-identical; unused)
+output/                        SUPERSEDED artifacts from the first attempt -- see solution/output/
+src/                           SUPERSEDED first attempt -- every module raises on import
+tests/                         SUPERSEDED first attempt -- collects nothing
 ```
+
+Everything the pipeline reads and writes lives under `solution/`. The four superseded entries above
+are the first attempt's tree, kept for the reason given below. Read `solution/output/analytics.json`,
+not `output/analytics.json`: the root copy predates the current metric registry and still uses the
+old metric ids (`mom_revenue_by_category`, `avg_txn_value_by_region`) instead of the contracted
+`mom_growth_by_category` and `aov_by_region`.
 
 Every line that handles a defect carries a `# DEFECT: <CODE>` tag, which is what the dashboard's
 code-links feature greps for.
+
+### Why `src/` and `tests/` are still here at the root
+
+They are the first attempt at this challenge. They are kept rather than deleted because most of what
+this submission argues for is only persuasive next to the version that got it wrong, and because a
+repository that quietly erases its own wrong turn is harder to trust than one that labels it. The
+five named bugs are listed in `src/__init__.py`, and each one is now defended by the maintained
+suite. Two of them — the unconditional `zfill` and the PR-02 price election — were re-applied
+verbatim as mutations M12 and M2 while this document was written, and both now fail the build (see
+*Mutation testing* above):
+
+| Root `src/` (superseded) | What went wrong | Fixed in |
+|---|---|---|
+| `cleaner.py` | Recomputed `total_amount = unit_price × quantity`, destroying TX-03 and overstating revenue by <!-- fig:discount_total -->$961.48<!-- /fig --> | `solution/src/cleaning/transactions.py` |
+| `cleaner.py` | One `pd.to_datetime(errors="coerce")` call dropped the 20 TX-01 rows, which were then misreported as future dates | `solution/src/cleaning/rules.py` |
+| `cleaner.py` | Hardcoded `NY -> "East"` where the column's vocabulary says `Northeast`, inventing a fifth region | `solution/src/cleaning/stores.py` |
+| `cleaner.py` | `drop_duplicates(subset=["product_id"])` swallowed PR-02, so the P005 price change was never reported | `solution/src/cleaning/products.py` |
+| `cleaner.py` | `zfill(5)` applied unconditionally to every ZIP | `solution/src/cleaning/stores.py` |
+| `analytics.py`, `loader.py`, `profiler.py` | Superseded wholesale | `solution/src/analytics/`, `warehouse/`, `profiling/` |
+
+Neutralisation is deliberate rather than cosmetic. Importing anything under the root `src/` raises
+immediately with the path of the maintained module; the root `tests/` package collects nothing and
+says why in the pytest session header. Nothing re-exports the new code from the old location, because
+a transparent forward would make the wrong import path work and hide the duplication instead of
+surfacing it. `scripts/verify_submission.py` asserts both behaviours, so the shims cannot quietly rot
+back into something importable.
+
+One consequence worth stating: `solution/tests/` and the root `tests/` are both importable packages
+literally named `tests`, so pytest derives the same module name for both conftest files. The root
+`tests/conftest.py` releases that name once it has loaded, which is why `pytest` typed at the
+repository root still runs the 87 submitted tests instead of aborting on an import collision. The
+mechanism and the reasoning are commented in that file.
