@@ -378,18 +378,21 @@ async function main(): Promise<void> {
    * this block is about. Finding it by URL asserts exactly what these
    * assertions always meant and stops them being hostage to call ordering.
    */
-  const call = captured.find((c) => c.url === "https://generativelanguage.googleapis.com/v1beta/interactions");
-  check("calls the pinned model endpoint", !!call, "Missing call to Interactions API");
-  check("key travels in the x-goog-api-key header", call?.headers["x-goog-api-key"] === FAKE_KEY);
-  check("key is NOT in the URL", !call?.url.includes(FAKE_KEY) && !call?.url.includes("key="));
-  check("generation payload carries the system instruction", !!(call?.body as any)?.systemInstruction?.parts);
+  const call = captured.find((c) => c.url.includes("/interactions")) as Captured;
+  const probe = captured.find((c) => c.url.includes("/models?")) as Captured | undefined;
+  check("the first live request probes ListModels", Boolean(probe), captured.map((c) => c.url).join(" | "));
+  check("the ListModels probe carries the key in the header, not the URL", Boolean(probe) && probe!.headers["x-goog-api-key"] === FAKE_KEY && !probe!.url.includes(FAKE_KEY) && !probe!.url.includes("key="), probe?.url);
+  check("calls the pinned model endpoint", call.url === `https://generativelanguage.googleapis.com/v1beta/interactions`, call.url);
+  check("key travels in the x-goog-api-key header", call.headers["x-goog-api-key"] === FAKE_KEY);
+  check("key is NOT in the URL", !call.url.includes(FAKE_KEY) && !call.url.includes("key="));
+  check("a system instruction is sent", typeof call.body.systemInstruction === "object");
   check(
-    "generation payload carries the retrieved context",
-    String((call?.body as any)?.contents?.[0]?.parts?.[0]?.text).includes("missing_region_inference"),
+    "the system instruction forbids inventing numbers",
+    JSON.stringify(call.body.systemInstruction).includes("NEVER state a number"),
   );
   check(
     "max output tokens are capped",
-    (call?.body as any)?.generationConfig?.maxOutputTokens === 1400,
+    (call.body.generationConfig as { maxOutputTokens?: number })?.maxOutputTokens === 1400,
   );
   check(
     "the prompt carries the retrieved context, not the whole bundle",
@@ -405,7 +408,7 @@ async function main(): Promise<void> {
   const capCaptured: Captured[] = [];
   await handleChatPost(post({ question: "and TX-04?", history: longHistory }), makeDeps({ captured: capCaptured }));
   // Same reasoning as above: pick the generation, not whatever came first.
-  const capCall = capCaptured.find((c) => c.url.includes(":generateContent")) as Captured;
+  const capCall = capCaptured.find((c) => c.url.includes("/interactions")) as Captured;
   const contents = capCall.body.contents as unknown[];
   check(
     "conversation length is capped server-side",

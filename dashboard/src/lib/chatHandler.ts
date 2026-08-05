@@ -117,8 +117,15 @@ export const MODEL_PREFERENCE: string[] = [MODEL_OVERRIDE, ...BASE_PREFERENCE].f
  */
 export const GEMINI_MODEL = MODEL_PREFERENCE[0];
 
-const LIST_URL = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000`;
-const INTERACTIONS_URL = `https://generativelanguage.googleapis.com/v1beta/interactions`;
+const GEMINI_API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
+
+/**
+ * ListModels. `pageSize` is maxed so one page carries everything — paging here
+ * would mean N round-trips on a cold instance to answer one question.
+ * No key in the URL: it goes in `x-goog-api-key`, same as generateContent.
+ */
+const LIST_MODELS_URL = `${GEMINI_API_ROOT}/models?pageSize=1000`;
+const INTERACTIONS_URL = `${GEMINI_API_ROOT}/interactions`;
 
 function generateContentUrl(model: string): string {
   return INTERACTIONS_URL;
@@ -407,7 +414,7 @@ async function runDiscovery(
 
   let res: Response;
   try {
-    res = await deps.fetchImpl(LIST_URL, {
+    res = await deps.fetchImpl(LIST_MODELS_URL, {
       method: "GET",
       // Key in a header. Never `?key=`, for the same reason as generateContent.
       headers: { "x-goog-api-key": apiKey },
@@ -627,7 +634,6 @@ interface GeminiPart {
 }
 
 interface GeminiResponseShape {
-  output_text?: string;
   candidates?: Array<{
     content?: { parts?: GeminiPart[] };
     finishReason?: string;
@@ -661,7 +667,7 @@ type CallOutcome =
  */
 async function callModelWithFallback(
   apiKey: string,
-  payload: { input: string },
+  payload: Record<string, unknown>,
   deps: ChatDeps,
 ): Promise<CallOutcome> {
   const now = deps.now ?? (() => Date.now());
@@ -721,19 +727,18 @@ async function callModelWithFallback(
       }
 
       let upstream: Response;
-      const signal = AbortSignal.timeout(budget);
       try {
         upstream = await deps.fetchImpl(generateContentUrl(model), {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "content-type": "application/json",
             "x-goog-api-key": apiKey,
           },
           body: JSON.stringify({
             model: `models/${model}`,
             ...payload
           }),
-          signal,
+          signal: AbortSignal.timeout(budget),
         });
       } catch (err) {
         const name = (err as { name?: string })?.name ?? "";
@@ -870,12 +875,12 @@ async function callModelWithFallback(
         outcome: "failed",
         status,
         attempts: attemptCount,
-        reason: `${statusPhrase(status)}: ${detail}`,
+        reason: statusPhrase(status),
       });
       return {
         kind: "failed",
         errorKind: "upstream_error",
-        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}. Detail: ${detail}`,
+        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}.`,
         resolution: resolution(),
       };
     }
@@ -1039,16 +1044,23 @@ export async function handleChatPost(
   /* 5. Retrieval. The whole point: a bounded, verbatim slice of the bundle. */
   const context = selectContext(bundle, question);
 
-  const historyText = history.map(t => `${t.role.toUpperCase()}: ${t.text}`).join('\n\n');
   const userTurn =
-    `SYSTEM INSTRUCTION: ${SYSTEM_INSTRUCTION}\n\n` +
     `CONTEXT (verbatim excerpts from the pipeline bundle — the only source you may use):\n` +
     `${context.text}\n\n` +
-    (historyText ? `PREVIOUS HISTORY:\n${historyText}\n\n` : "") +
     `----\nQUESTION: ${question}`;
 
   const payload = {
-    input: userTurn
+    systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+    contents: [
+      ...history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+      { role: "user", parts: [{ text: userTurn }] },
+    ],
+    generationConfig: {
+      temperature: TEMPERATURE,
+      topP: 0.9,
+      candidateCount: 1,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+    },
   };
 
   /* 6. Call upstream: discovery, candidate chain, bounded retry. Key in a
