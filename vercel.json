@@ -1,4 +1,4 @@
 {
-  "buildCommand": "npm --prefix dashboard install && npm --prefix dashboard run build",
-  "outputDirectory": "dashboard/out"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "echo 'ERROR: set the Vercel project Root Directory to \"dashboard\". See comment in this file.' && exit 1"
 }

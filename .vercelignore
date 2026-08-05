@@ -1,0 +1,31 @@
+# Never upload build artifacts to Vercel.
+#
+# WHY THIS FILE EXISTS: `dashboard/out/` is a stale static export left over from
+# when this app used `output: "export"`. The repo-root vercel.json pointed
+# `outputDirectory` at it, so `vercel --prod` run from the repo root uploaded
+# that folder and SERVED IT VERBATIM — a build from hours earlier, with no
+# /api/chat route, no server, and stale figures — while reporting success.
+# The deploy was green and the site was wrong.
+#
+# Vercel builds from source. Any pre-built output in the upload is either
+# ignored or, as here, actively harmful.
+dashboard/out/
+dashboard/.next/
+dashboard/node_modules/
+node_modules/
+
+# Local Python artifacts — nothing the dashboard build needs.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+solution/output/
+output/
+
+# Local scratch that should never reach a deployment.
+submission_pack_jeff_davison/
+Mindex_Submission_Attachments_*/
+*.zip
+INTERVIEW_QA.md
+VERIFICATION_REPORT.md
