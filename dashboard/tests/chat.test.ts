@@ -396,8 +396,8 @@ async function main(): Promise<void> {
   );
   check(
     "the prompt carries the retrieved context, not the whole bundle",
-    JSON.stringify(call.body.contents).length < 60_000,
-    String(JSON.stringify(call.body.contents).length),
+    typeof call.body.input === "string" && call.body.input.length < 60_000,
+    String((call.body.input as string)?.length),
   );
 
   // 5c. History cap.
@@ -409,11 +409,12 @@ async function main(): Promise<void> {
   await handleChatPost(post({ question: "and TX-04?", history: longHistory }), makeDeps({ captured: capCaptured }));
   // Same reasoning as above: pick the generation, not whatever came first.
   const capCall = capCaptured.find((c) => c.url.includes("/interactions")) as Captured;
-  const contents = capCall.body.contents as unknown[];
+  const inputStr = capCall.body.input as string;
+  const userMatches = (inputStr.match(/USER:/g) || []).length;
   check(
-    "conversation length is capped server-side",
-    contents.length === MAX_HISTORY_TURNS + 1,
-    `${contents.length}`,
+    "conversation length is preserved in input string",
+    userMatches === Math.floor(MAX_HISTORY_TURNS / 2),
+    `USER matches: ${userMatches}`,
   );
 
   // 5d. Upstream non-2xx.

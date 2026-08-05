@@ -1044,17 +1044,16 @@ export async function handleChatPost(
   /* 5. Retrieval. The whole point: a bounded, verbatim slice of the bundle. */
   const context = selectContext(bundle, question);
 
+  const historyText = history.map(t => `${t.role.toUpperCase()}: ${t.text}`).join('\n\n');
   const userTurn =
     `CONTEXT (verbatim excerpts from the pipeline bundle — the only source you may use):\n` +
     `${context.text}\n\n` +
+    (historyText ? `PREVIOUS HISTORY:\n${historyText}\n\n` : "") +
     `----\nQUESTION: ${question}`;
 
   const payload = {
     systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-    contents: [
-      ...history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
-      { role: "user", parts: [{ text: userTurn }] },
-    ],
+    input: userTurn,
     generationConfig: {
       temperature: TEMPERATURE,
       topP: 0.9,
