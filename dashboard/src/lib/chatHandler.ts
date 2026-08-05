@@ -125,10 +125,9 @@ const GEMINI_API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
  * No key in the URL: it goes in `x-goog-api-key`, same as generateContent.
  */
 const LIST_MODELS_URL = `${GEMINI_API_ROOT}/models?pageSize=1000`;
-const INTERACTIONS_URL = `https://generativelanguage.googleapis.com/v1beta/interactions`;
 
 function generateContentUrl(model: string): string {
-  return INTERACTIONS_URL;
+  return `${GEMINI_API_ROOT}/models/${model}:generateContent`;
 }
 
 /* ── Cost and abuse envelope ──────────────────────────────────────────────
@@ -734,10 +733,7 @@ async function callModelWithFallback(
             "content-type": "application/json",
             "x-goog-api-key": apiKey,
           },
-          body: JSON.stringify({
-            model: model,
-            ...payload
-          }),
+          body: JSON.stringify(payload),
           signal: AbortSignal.timeout(budget),
         });
       } catch (err) {
@@ -1044,20 +1040,22 @@ export async function handleChatPost(
   /* 5. Retrieval. The whole point: a bounded, verbatim slice of the bundle. */
   const context = selectContext(bundle, question);
 
-  const historyText = history.map(t => `${t.role.toUpperCase()}: ${t.text}`).join('\n\n');
   const userTurn =
     `CONTEXT (verbatim excerpts from the pipeline bundle — the only source you may use):\n` +
     `${context.text}\n\n` +
-    (historyText ? `PREVIOUS HISTORY:\n${historyText}\n\n` : "") +
     `----\nQUESTION: ${question}`;
 
   const payload = {
-    system_instruction: SYSTEM_INSTRUCTION,
-    input: userTurn,
-    generation_config: {
+    systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+    contents: [
+      ...history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+      { role: "user", parts: [{ text: userTurn }] },
+    ],
+    generationConfig: {
       temperature: TEMPERATURE,
-      top_p: 0.9,
-      max_output_tokens: MAX_OUTPUT_TOKENS,
+      topP: 0.9,
+      candidateCount: 1,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     },
   };
 
