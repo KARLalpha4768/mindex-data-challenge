@@ -61,6 +61,7 @@
  */
 
 import React from "react";
+import { Highlight, themes } from "prism-react-renderer";
 
 import { Badge, CopyButton } from "@/components/ui";
 import {
@@ -231,6 +232,30 @@ function AuditNote({ audit }: { audit: NumericAudit }) {
   );
 }
 
+function CodeBlock({ code, language }: { code: string; language: string }) {
+  return (
+    <Highlight theme={themes.vsDark} code={code.trim()} language={language || "typescript"}>
+      {({ className, style, tokens, getLineProps, getTokenProps }) => (
+        <div className="relative my-3 rounded border border-line bg-panel overflow-hidden font-mono text-xs text-left">
+          <div className="flex items-center justify-between border-b border-line px-3 py-1 bg-raised/50 text-ink-dim">
+            <span className="text-2xs font-semibold uppercase">{language || "code"}</span>
+            <CopyButton text={code} label="Copy" />
+          </div>
+          <pre className="p-3 overflow-x-auto" style={style}>
+            {tokens.map((line, i) => (
+              <div key={i} {...getLineProps({ line })}>
+                {line.map((token, key) => (
+                  <span key={key} {...getTokenProps({ token })} />
+                ))}
+              </div>
+            ))}
+          </pre>
+        </div>
+      )}
+    </Highlight>
+  );
+}
+
 const JARGON_DICT: Record<string, string> = {
   survivorship: "Determines which duplicate row is kept based on timestamp.",
   imputation: "Replacing missing values with derived or default values.",
@@ -240,6 +265,15 @@ const JARGON_DICT: Record<string, string> = {
 };
 
 const PARSERS = [
+  {
+    regex: /(```[\s\S]*?```)/g,
+    render: (match: string) => {
+      const lines = match.trim().split("\n");
+      const firstLine = lines[0].replace(/^```/, "").trim();
+      const code = lines.slice(1, -1).join("\n");
+      return <CodeBlock code={code} language={firstLine || "sql"} />;
+    },
+  },
   {
     regex: /\b(ST-\d{2}|PR-\d{2}|TX-\d{2})\b/gi,
     render: (match: string, knownCodes: Set<string>, onSelectDefect?: (c: string) => void) => {
@@ -369,8 +403,15 @@ function LinkedText({
   return <>{React.Children.toArray(nodes)}</>;
 }
 
-export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props) {
-  const [isOpen, setIsOpen] = React.useState(false);
+interface Props {
+  bundle: Bundle;
+  defects: DefectView[];
+  onSelectDefect?: (code: string) => void;
+  forceOpen?: boolean;
+}
+
+export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOpen = false }: Props) {
+  const [isOpen, setIsOpen] = React.useState(forceOpen);
   const [inputQuery, setInputQuery] = React.useState("");
   const [mode, setMode] = React.useState<Mode>("checking");
   const [modelName, setModelName] = React.useState<string>("");
@@ -1019,6 +1060,15 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props
                   {/* Provenance line. Always present for assistant output. */}
                   {m.sourceNote && (
                     <p className="text-2xs italic text-ink-faint">{m.sourceNote}</p>
+                  )}
+
+                  {/* Context Scope Badge */}
+                  {m.source !== "user" && (
+                    <div className="flex items-center gap-1.5 rounded bg-panel/80 px-2.5 py-1 text-2xs text-ink-dim border border-line/50 font-mono">
+                      <span>📎</span>
+                      <span className="font-semibold text-accent">Grounded on:</span>
+                      <span>pipeline bundle.json ({m.audit ? `${m.audit.checked} figures verified` : "audited facts"})</span>
+                    </div>
                   )}
 
                   {/* Numeric self-audit, immediately under the provenance line:

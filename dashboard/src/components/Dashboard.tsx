@@ -237,9 +237,17 @@ export default function Dashboard({
         {route.view === "analytics" && <Analytics bundle={bundle} />}
 
         {route.view === "tests" && <TestResults bundle={bundle} />}
+
+        {route.view === "assistant" && (
+          <div className="mx-auto max-w-5xl">
+            <ChatAssistant bundle={bundle} defects={defects} onSelectDefect={goToDefect} forceOpen={true} />
+          </div>
+        )}
       </main>
 
-      <ChatAssistant bundle={bundle} defects={defects} onSelectDefect={goToDefect} />
+      {route.view !== "assistant" && (
+        <ChatAssistant bundle={bundle} defects={defects} onSelectDefect={goToDefect} />
+      )}
 
       <footer className="border-t border-line px-4 py-6 sm:px-6">
         <div className="mx-auto flex max-w-screen flex-wrap items-center justify-between gap-3 text-2xs text-ink-faint">

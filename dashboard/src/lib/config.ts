@@ -111,6 +111,7 @@ export const VIEWS = [
   { id: "schema", label: "Schema" },
   { id: "analytics", label: "Analytics" },
   { id: "tests", label: "Validation & Tests" },
+  { id: "assistant", label: "Assistant Workspace" },
 ] as const;
 
 export type ViewId = (typeof VIEWS)[number]["id"];
