@@ -2601,20 +2601,51 @@ async function main(): Promise<void> {
    * one cell (so the verbatim-quote assertion has something to find).
    */
   const txRows = csvDiff.transactions?.rows ?? [];
-  const cellRowIndex = txRows.findIndex(
-    (r) =>
-      (r.defects ?? []).length >= 2 &&
-      Object.values(r.cells ?? {}).some((c) => c && c.defect_code && c.explanation),
-  );
+  /*
+   * The chosen cell must have NON-EMPTY values on both sides.
+   *
+   * A TX-06 guest row has `raw_value === ""` — the missing customer id is the
+   * whole defect — and the block renders that as `raw="(empty)"`, which is the
+   * right thing to show a model. The assertions below look for the values
+   * verbatim, so an empty side would have them asserting on the renderer's
+   * placeholder rather than on the data. Picking a cell with two real values
+   * keeps the test about the contract instead of about the formatting.
+   */
+  const hasExplainedCell = (r: (typeof txRows)[number]) =>
+    Object.values(r.cells ?? {}).some(
+      (c) => c && c.defect_code && c.explanation && c.raw_value && c.clean_value,
+    );
+
+  /*
+   * ORIGINALLY this demanded a row with TWO OR MORE defect codes, and it passed
+   * — against a `csv_diff.json` that disagreed with the pipeline's own lineage
+   * ledger on 101 of 505 rows and attached codes that did not belong to the
+   * rows it put them on. Once the file was regenerated from the pipeline's
+   * artifacts, no multi-code transaction row remained, and the test failed.
+   *
+   * That is the correct outcome, not a regression: `seed_data.py` injects each
+   * defect class into a DISJOINT range of source rows, so no transaction can
+   * legitimately carry two. A fixture requirement that only a corrupt file
+   * could satisfy is a requirement worth deleting.
+   *
+   * Multi-code pinning is still exercised — by the dimension rows below and by
+   * the direct `pinnedCodes` assertions — so nothing is lost by asking here for
+   * what the data can actually provide: a flagged, explained cell.
+   */
+  const cellRowIndex = txRows.findIndex((r) => (r.defects ?? []).length >= 1 && hasExplainedCell(r));
   const cellRow = cellRowIndex >= 0 ? txRows[cellRowIndex] : null;
   const cellColumn = cellRow
     ? (csvDiff.transactions?.headers ?? []).find(
-        (h) => cellRow.cells?.[h]?.defect_code && cellRow.cells?.[h]?.explanation,
+        (h) =>
+          cellRow.cells?.[h]?.defect_code &&
+          cellRow.cells?.[h]?.explanation &&
+          cellRow.cells?.[h]?.raw_value &&
+          cellRow.cells?.[h]?.clean_value,
       ) ?? null
     : null;
 
   check(
-    "a multi-defect transactions row exists in csv_diff.json to test against",
+    "a flagged, explained transactions row exists in csv_diff.json to test against",
     cellRow !== null && cellColumn !== null,
     `rows=${txRows.length}, index=${cellRowIndex}, column=${cellColumn}`,
   );

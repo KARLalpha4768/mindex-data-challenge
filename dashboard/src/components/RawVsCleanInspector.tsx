@@ -631,17 +631,30 @@ export default function RawVsCleanInspector({
                       <td className="p-2 border-r border-line/50 text-ink-faint text-2xs">{i + 1}</td>
                       {headers.map((h) => {
                         const cell = r.cells[h] ?? { raw_value: "", status: "clean" };
-                        const isErr = cell.status === "error" || cell.status === "fixed";
+                        // Every flagged cell is inspectable, but only a genuine
+                        // exclusion is painted red. A preserved finding gets its
+                        // own colour so the raw pane does not accuse the
+                        // pipeline of dropping data it deliberately kept.
+                        const isPreserved = cell.status === "preserved";
+                        const isErr = cell.status === "error" || cell.status === "fixed" || isPreserved;
                         return (
                           <td
                             key={h}
                             onClick={() => isErr && handleCellClick(r, h, cell as CellInfo)}
                             className={`p-2 border-r border-line/50 transition-colors ${
-                              isErr
-                                ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
-                                : "text-ink-dim"
+                              isPreserved
+                                ? "cursor-pointer bg-amber-500/15 text-amber-300 font-semibold hover:bg-amber-500/25"
+                                : isErr
+                                  ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
+                                  : "text-ink-dim"
                             }`}
-                            title={isErr ? `Click to inspect ${cell.defect_code}` : undefined}
+                            title={
+                              isPreserved
+                                ? `${cell.defect_code} — flagged and deliberately preserved, not an error`
+                                : isErr
+                                  ? `Click to inspect ${cell.defect_code}`
+                                  : undefined
+                            }
                           >
                             {cell.raw_value}
                             {cell.defect_code && (
@@ -695,7 +708,8 @@ export default function RawVsCleanInspector({
                       <td className="p-2 border-r border-line/50 text-ink-faint text-2xs">{i + 1}</td>
                       {headers.map((h) => {
                         const cell = r.cells[h] ?? { clean_value: "", status: "clean" };
-                        const isFixed = cell.status === "fixed" || cell.status === "error";
+                        const isPreservedClean = cell.status === "preserved";
+                        const isFixed = cell.status === "fixed" || cell.status === "error" || isPreservedClean;
                         const isFlashing = flashingCell?.uid === r.uid && flashingCell?.col === h;
 
                         return (
@@ -705,7 +719,9 @@ export default function RawVsCleanInspector({
                             className={`p-2 border-r border-line/50 transition-all duration-300 ${
                               isFlashing
                                 ? "bg-green-500/40 text-green-100 font-bold ring-4 ring-green-400 animate-pulse shadow-xl shadow-green-500/50 z-10"
-                                : isFixed
+                                : isPreservedClean
+                                  ? "cursor-pointer bg-amber-500/15 text-amber-300 font-semibold hover:bg-amber-500/25"
+                                  : isFixed
                                   ? "cursor-pointer bg-green-500/15 text-green-300 font-semibold hover:bg-green-500/25"
                                   : "text-ink-dim"
                             }`}

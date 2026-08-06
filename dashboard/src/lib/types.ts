@@ -266,7 +266,16 @@ export interface DefectView extends DefectSpec {
 export interface CsvDiffCell {
   raw_value: string;
   clean_value: string;
-  status: "clean" | "error" | "fixed";
+  /**
+   * What the pipeline did with this cell.
+   *
+   * `preserved` exists because "flagged" and "wrong" are not the same thing. A
+   * return's negative quantity (TX-10) and a silent discount's reported total
+   * (TX-03) are both correct data the pipeline deliberately declined to touch —
+   * and both are among the most important findings in the submission. Rendering
+   * them as errors told a reviewer the exact opposite of the decision on screen.
+   */
+  status: "clean" | "error" | "fixed" | "preserved";
   defect_code: string | null;
   explanation: string | null;
 }
