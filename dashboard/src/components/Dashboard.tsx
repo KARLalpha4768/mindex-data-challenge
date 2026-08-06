@@ -8,6 +8,7 @@ import DataProfile from "@/components/DataProfile";
 import DefectExplorer from "@/components/DefectExplorer";
 import Lineage from "@/components/Lineage";
 import Overview from "@/components/Overview";
+import RawVsCleanInspector from "@/components/RawVsCleanInspector";
 import SchemaView from "@/components/SchemaView";
 import TestResults from "@/components/TestResults";
 import { Badge } from "@/components/ui";
@@ -237,6 +238,8 @@ export default function Dashboard({
         {route.view === "analytics" && <Analytics bundle={bundle} />}
 
         {route.view === "tests" && <TestResults bundle={bundle} />}
+
+        {route.view === "raw" && <RawVsCleanInspector bundle={bundle} onSelectDefect={goToDefect} />}
 
         {route.view === "assistant" && (
           <div className="mx-auto max-w-5xl">
