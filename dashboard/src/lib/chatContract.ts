@@ -160,6 +160,32 @@ export interface NumericAudit {
  * earlier contract ignores the lot and renders exactly as it did before.
  */
 
+/* ── Transport (added after v3; every field below is additive) ────────────
+ *
+ * WHY A "TRANSPORT" EXISTS AT ALL.
+ * The Generative Language API now has two ways to ask a model a question, and
+ * which one a given API key may use depends on how that key was minted:
+ *
+ *   `interactions`      POST /v1beta/interactions — the Interactions API, GA
+ *                       since June 2026 and where new models launch. The model
+ *                       name travels in the request BODY.
+ *   `generateContent`   POST /v1beta/models/{model}:generateContent — the
+ *                       original REST surface. Documented as legacy but fully
+ *                       supported. The model name travels in the URL.
+ *
+ * The deployment this field was added for failed every live call with HTTP 400
+ * on BOTH `models/{model}:generateContent` and `GET /v1beta/models` — the
+ * latter a bare GET with no request body, so "malformed payload" could not be
+ * the explanation. The key in that deployment is one of the new-style AI Studio
+ * auth keys (they are now the default), and the working hypothesis is that such
+ * keys are accepted by the Interactions API and refused by the legacy
+ * `models/*` paths. The server therefore tries Interactions first and keeps
+ * `generateContent` as an automatic fallback, and reports WHICH ONE answered —
+ * because that single word is the observation that confirms or refutes the
+ * hypothesis on a live deployment, and no amount of local testing can supply it.
+ */
+export type ChatTransport = "interactions" | "generateContent";
+
 /** What happened on one candidate model. */
 export type ModelAttemptOutcome =
   /** This model produced the answer. */
@@ -175,6 +201,13 @@ export type ModelAttemptOutcome =
 
 export interface ModelAttempt {
   model: string;
+  /**
+   * Which endpoint this attempt used. Optional so a client built against the
+   * earlier contract is unaffected; present on every attempt the current server
+   * records, because "gemini-3.6-flash failed" and "gemini-3.6-flash failed on
+   * the legacy endpoint" are different findings.
+   */
+  transport?: ChatTransport;
   outcome: ModelAttemptOutcome;
   /** Upstream HTTP status, when there was one. Absent for a thrown fetch. */
   status?: number;
@@ -208,6 +241,18 @@ export interface ModelResolution {
   skipped: string[];
   /** Preference entries that ListModels did not report for this key's project. */
   unavailable: string[];
+
+  /* ── Transport fields. Additive; absent from an older server's payload. ── */
+
+  /** The endpoint order tried on this request, after any instance-level caching. */
+  transports?: ChatTransport[];
+  /** The endpoint that produced the answer. Absent when nothing answered. */
+  transport?: ChatTransport;
+  /**
+   * One line saying what the transport layer did and why — including which
+   * endpoint was tried first and how it failed. Rendered verbatim.
+   */
+  transportNote?: string;
 }
 
 export interface ChatSuccess {
@@ -220,6 +265,13 @@ export interface ChatSuccess {
    * is never told an answer came from a model that did not produce it.
    */
   model: string;
+  /**
+   * The endpoint that produced this text. Optional and ignored by older
+   * clients. Shown in the provenance line next to the model name, because on a
+   * deployment where one of the two endpoints refuses the key, "which endpoint
+   * answered" is the single most useful fact about a successful call.
+   */
+  transport?: ChatTransport;
   context: ChatContextSummary;
   /** Token usage as reported by the upstream, when it reports any. */
   usage?: { promptTokens?: number; responseTokens?: number; totalTokens?: number };
@@ -293,6 +345,21 @@ export interface ChatStatusResponse {
   discoveryNote?: string;
   /** Models retired this instance after a model-specific rejection, with the reason. */
   retired?: Array<{ model: string; reason: string }>;
+
+  /* ── Transport diagnosis. Additive, and the reason this probe exists. ────
+   * `curl` against GET /api/chat now answers "which endpoint is this
+   * deployment actually able to use?" — which is exactly the question the
+   * 400-on-everything failure could not answer from the outside.
+   */
+
+  /** The endpoint that has answered on this instance. `null` until one has. */
+  transport?: ChatTransport | null;
+  /** The endpoint order the next question would try. */
+  transports?: ChatTransport[];
+  /** One line explaining the transport state, including anything retired. */
+  transportNote?: string;
+  /** The `GEMINI_TRANSPORT` env override, when set. */
+  transportOverride?: ChatTransport;
 }
 
 /* ── Limits. Shared so the client can pre-trim instead of eating a 400. ──── */

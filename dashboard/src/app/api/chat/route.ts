@@ -49,9 +49,13 @@ export const dynamic = "force-dynamic";
 
 /**
  * Capability probe and diagnosis surface. Returns a boolean about the key,
- * never the key — plus the model-resolution state of this instance (which
- * model is answering, what else is queued, whether ListModels has run, what has
- * already been retired). Synchronous and network-free: it reports what the
+ * never the key — plus the resolution state of this instance: which ENDPOINT
+ * the deployment is able to use (the Interactions API or the legacy
+ * generateContent path), which model is answering, what else is queued, whether
+ * ListModels has run, and what has already been retired. That first field is
+ * why this probe earns its keep: a deployment where every call returned HTTP
+ * 400 could not, from the outside, distinguish a bad key from an endpoint that
+ * refuses this kind of key. Synchronous and network-free: it reports what the
  * instance knows, and never spends an upstream call to learn more, because a
  * reviewer who opens the panel and closes it again should not cost the
  * deployment a round-trip.

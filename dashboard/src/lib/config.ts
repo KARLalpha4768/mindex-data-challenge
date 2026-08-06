@@ -24,10 +24,23 @@ export const GITHUB_BASE_URL =
   "https://github.com/KARLalpha4768/mindex-data-challenge/blob/main";
 
 /**
- * Paths inside the bundle's `code_index` are relative to the Python project
- * root (`src/cleaning/...`).
+ * Paths inside the bundle's `code_index` are relative to the PYTHON PROJECT
+ * root (`src/cleaning/transactions.py`), which is not the REPOSITORY root.
+ * The maintained pipeline lives in `solution/`, so this prefix is what turns a
+ * bundle path into a repository path.
+ *
+ * WHY THIS IS NOT AN EMPTY STRING, AND WHY IT MATTERS:
+ * the repository root also contains a `src/` — the superseded first attempt,
+ * now a set of deprecation shims that raise on import. With no prefix, every
+ * "view on GitHub" link in this dashboard resolved to
+ * `…/blob/main/src/cleaning/transactions.py`, which exists, returns HTTP 200,
+ * and is a stub. A reviewer following a code link to verify a defect decision
+ * would have landed on a file that explicitly says it is not the submission —
+ * the single worst place a "here is the exact line that handles it" link could
+ * possibly point. Wrong-but-resolving links are more damaging than broken ones,
+ * because nothing signals that anything went wrong.
  */
-export const REPO_SOURCE_PREFIX = "";
+export const REPO_SOURCE_PREFIX = "solution";
 
 /** Build a permalink to a specific line of pipeline source on GitHub. */
 export function githubBlobUrl(path: string, line?: number): string {

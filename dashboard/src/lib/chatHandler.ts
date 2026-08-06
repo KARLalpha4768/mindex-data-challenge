@@ -53,6 +53,61 @@
  * with the console fix spelled out, because the worst outcome here is an
  * operator rewriting retry logic against a problem that lives in the API
  * console.
+ *
+ * ── AND WHY IT THEN GREW A TRANSPORT LAYER ────────────────────────────────
+ * The model layer above was not enough. The live probe came back:
+ *
+ *   {"configured":true,"bundleAvailable":true,"discovery":"unavailable",
+ *    "discoveryNote":"ListModels returned HTTP 400; the preference list was
+ *     tried directly."}
+ *
+ * — i.e. the key reached the function, the bundle loaded, and BOTH upstream
+ * calls returned HTTP 400: `POST models/{model}:generateContent` AND
+ * `GET /v1beta/models`. ListModels carries no request body. There is nothing in
+ * it to malform. A 400 on a bare GET is not a statement about a payload; it is
+ * the credential being refused by that endpoint.
+ *
+ * THE HYPOTHESIS. The key on that deployment is one of the new-style Google AI
+ * Studio **auth keys** (prefix `AQ.`; Google now mints these by default, where
+ * the legacy format was `AIza…`). The Interactions API — GA since June 2026,
+ * `POST /v1beta/interactions`, and where every new model now launches — accepts
+ * them. The legacy `models/*` REST paths appear not to. Every observation above
+ * is consistent with that, and with community reports; none of it can be
+ * *proved* from a sandbox with no network, and this file does not pretend
+ * otherwise.
+ *
+ * WHAT THIS FILE DOES ABOUT IT. Not "switch endpoints and hope". The endpoint
+ * became a second dimension of the same fallback machinery that already existed
+ * for models:
+ *
+ *   • **Interactions is the primary transport.** Every request is built for it
+ *     first: model in the body, the grounded prompt as `input`, the system
+ *     instruction re-sent (interaction-scoped config is not sticky), and
+ *     `store: false` because this is a public demo and conversation text must
+ *     not be retained in the project.
+ *   • **generateContent remains an automatic fallback transport.** If
+ *     Interactions fails in a way that implicates the ENDPOINT or the KEY TYPE
+ *     — a 400/404 on the endpoint itself, as opposed to a content refusal or a
+ *     quota error — the request falls through to the legacy path and continues
+ *     there. This is not belt-and-braces for its own sake: a deployment holding
+ *     an old `AIza` key must keep working, and if the hypothesis is inverted
+ *     (auth keys refused by Interactions, accepted by generateContent) this code
+ *     still answers the question. A fix that is only correct if a guess is
+ *     correct is not a fix.
+ *   • **The winning transport is cached per instance**, exactly as the winning
+ *     model already is, so the chain is walked at most once per warm instance.
+ *   • **The answer says which endpoint produced it.** `GET /api/chat`, the
+ *     `resolution` on every response and the provenance line under every live
+ *     answer all name the transport. THAT is the observation that settles the
+ *     hypothesis: one live question whose answer says `via interactions` while
+ *     the attempt log shows generateContent refused with 400 confirms it; the
+ *     mirror image refutes it; both endpoints returning 400/API_KEY_INVALID
+ *     means the key itself is bad and no transport helps.
+ *
+ * ListModels is deliberately NOT part of this decision. It is itself a legacy
+ * `models/*` endpoint and will most likely keep failing for an auth key; its
+ * failure degrades to blind mode as before and must never retire a candidate or
+ * a transport.
  */
 
 import { loadBundle } from "./bundle";
@@ -65,6 +120,7 @@ import {
   type ChatFailure,
   type ChatResponse,
   type ChatStatusResponse,
+  type ChatTransport,
   type ChatTurn,
   type ModelAttempt,
   type ModelResolution,
@@ -122,13 +178,63 @@ const GEMINI_API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
 /**
  * ListModels. `pageSize` is maxed so one page carries everything — paging here
  * would mean N round-trips on a cold instance to answer one question.
- * No key in the URL: it goes in `x-goog-api-key`, same as generateContent.
+ * No key in the URL: it goes in `x-goog-api-key`, same as every other call.
  */
 const LIST_MODELS_URL = `${GEMINI_API_ROOT}/models?pageSize=1000`;
+
+/**
+ * The Interactions API. One fixed URL for every model — the model name travels
+ * in the request body, which is the structural difference from the legacy path
+ * and the reason a 404 here means something different from a 404 there (see
+ * `classifyFailure`). No key in the URL, same rule as everywhere else.
+ */
+const INTERACTIONS_URL = `${GEMINI_API_ROOT}/interactions`;
 
 function generateContentUrl(model: string): string {
   return `${GEMINI_API_ROOT}/models/${model}:generateContent`;
 }
+
+/* ── The transport preference chain ───────────────────────────────────────
+ *
+ * Same shape as the model chain above, one level up: an ordered list, an env
+ * override that jumps the queue rather than replacing the list, and per-instance
+ * caching of whichever entry actually worked.
+ *
+ * WHY INTERACTIONS FIRST. It is the GA surface, it is where new models launch,
+ * `generateContent` is documented as legacy-but-supported, and — the operative
+ * reason — it is the endpoint the live 400s point at. Trying it first costs a
+ * healthy `AIza` deployment exactly one extra round-trip, once per warm
+ * instance, after which the working transport is cached.
+ *
+ * WHY generateContent IS STILL IN THE LIST. Because the hypothesis might be
+ * wrong. If auth keys turn out to be refused by Interactions instead, this list
+ * self-corrects on the first request and the deployment still answers.
+ */
+const BASE_TRANSPORTS: readonly ChatTransport[] = ["interactions", "generateContent"] as const;
+
+/** Accepts `interactions`, `generateContent`, `generate_content`, any case. */
+function normaliseTransport(raw: string | undefined): ChatTransport | undefined {
+  const value = (raw ?? "").trim().toLowerCase().replace(/[_-]/g, "");
+  if (value === "interactions" || value === "interaction") return "interactions";
+  if (value === "generatecontent" || value === "legacy") return "generateContent";
+  return undefined;
+}
+
+/**
+ * Server-side only, never `NEXT_PUBLIC_`. Lets an operator pin a transport from
+ * the deployment dashboard with no rebuild — useful precisely because the
+ * hypothesis this file encodes is unproven, and an operator who has watched one
+ * endpoint work should be able to stop paying for the other one's round-trip.
+ * An unrecognised value is ignored rather than fatal: a typo here must not take
+ * the assistant down.
+ */
+export const TRANSPORT_OVERRIDE = normaliseTransport(process.env.GEMINI_TRANSPORT);
+
+/** Override first, then the base list, de-duplicated, order preserved. */
+export const TRANSPORT_PREFERENCE: ChatTransport[] = [
+  ...(TRANSPORT_OVERRIDE ? [TRANSPORT_OVERRIDE] : []),
+  ...BASE_TRANSPORTS,
+].filter((t, i, all) => all.indexOf(t) === i);
 
 /* ── Cost and abuse envelope ──────────────────────────────────────────────
  * Every one of these is a spend control as much as a safety control. The
@@ -139,7 +245,7 @@ function generateContentUrl(model: string): string {
 /** Per-IP request allowance and window. ~1 question every 15s sustained. */
 const RATE_LIMIT = { limit: 20, windowMs: 5 * 60 * 1000 };
 /** Upper bound on generated tokens — bounds the output half of the bill. */
-const MAX_OUTPUT_TOKENS = 8500;
+const MAX_OUTPUT_TOKENS = 1400;
 /**
  * The WHOLE budget for one request's dealings with Google: discovery, every
  * candidate, and every retry between them. Not per-call. A serverless function
@@ -163,8 +269,44 @@ const DISCOVERY_MIN_BUDGET_MS = 6_000;
 /**
  * Near-zero temperature. This is an extraction task over supplied context;
  * creativity here is indistinguishable from fabrication.
+ *
+ * Applies to the `generateContent` transport, whose `generationConfig`
+ * documents `temperature`. See `INTERACTIONS_SEED` for what the Interactions
+ * transport does instead, and why it does not simply send this too.
  */
 const TEMPERATURE = 0.1;
+
+/**
+ * WHY THE INTERACTIONS CALL DOES NOT SEND A TEMPERATURE.
+ *
+ * The Interactions API's `generation_config` documents `max_output_tokens`,
+ * `seed`, `stop_sequences`, `thinking_level`, `thinking_summaries` and the
+ * media configs. It does not document `temperature`, `top_p` or
+ * `candidate_count`. Google's JSON APIs reject unknown fields outright — 400
+ * INVALID_ARGUMENT, "Cannot find field" — which is the exact failure class this
+ * whole change exists to remove. Sending an undocumented field on the transport
+ * we are switching TO in order to escape a 400 would be a remarkable way to
+ * reintroduce one.
+ *
+ * So determinism is bought the way this API documents: a fixed `seed`. The
+ * value is arbitrary and only has to be constant — the property wanted is "the
+ * same question returns the same answer", which matters here for the same
+ * reason `AS_OF_DATE` is pinned in the pipeline: a reviewer who asks twice and
+ * gets two different numbers cannot tell which one to trust.
+ *
+ * If a live 400 ever names `seed` or `thinking_level`, drop them: they are
+ * quality knobs, and the answer matters more than the knobs.
+ */
+const INTERACTIONS_SEED = 7;
+
+/**
+ * Thought tokens are billed as output tokens, and this is extraction over
+ * supplied context — the reasoning that matters has already been done by the
+ * retrieval layer. `low` rather than `minimal` because the task still involves
+ * reconciling several quoted blocks, and rather than `high` because paying a
+ * frontier model to deliberate over a quoted figure buys latency, not accuracy.
+ */
+const INTERACTIONS_THINKING_LEVEL = "low";
 
 /* ── Retry policy ─────────────────────────────────────────────────────────
  *
@@ -354,12 +496,52 @@ let inFlightDiscovery: Promise<Discovery> | null = null;
 let resolvedModel: string | null = null;
 
 /**
+ * The transport that has actually answered on this instance. Null until one
+ * has. Cached for exactly the same reason `resolvedModel` is: once an endpoint
+ * has proved it works for this key, re-deriving that on every question is a
+ * round-trip spent re-learning a constant.
+ */
+let resolvedTransport: ChatTransport | null = null;
+
+/**
+ * Transports retired after the ENDPOINT rejected the call (a 404, or a 400 that
+ * is not about content, quota or the key string). Keyed by transport, value is
+ * the human reason for `GET /api/chat`.
+ *
+ * An auth failure deliberately does NOT retire a transport: "this key is bad"
+ * is not evidence about an endpoint, and retiring on it would hide the very
+ * asymmetry — one endpoint accepting the key, the other refusing it — that this
+ * layer exists to detect.
+ */
+const retiredTransports = new Map<ChatTransport, string>();
+
+/**
  * Models retired after a model-specific rejection, with the reason. A retired
  * model is never tried again on this instance: it 404'd for this key once and
  * nothing about the next question changes that. Value is the human reason, so
  * `GET /api/chat` can show it.
+ *
+ * KEYED BY TRANSPORT, because model availability is a property of (project,
+ * endpoint) and not of the model name alone: the Interactions API and the
+ * legacy path do not publish the same catalogue, and a name the legacy endpoint
+ * has never heard of is exactly the kind of name that launches on the new one.
+ * Retiring `gemini-3.6-flash` everywhere because `generateContent` 404'd it
+ * would be the model-selection bug this file already fixed, one level up.
  */
-const retiredModels = new Map<string, string>();
+const retiredModels = new Map<ChatTransport, Map<string, string>>();
+
+function retirementsFor(transport: ChatTransport): Map<string, string> {
+  let map = retiredModels.get(transport);
+  if (!map) {
+    map = new Map<string, string>();
+    retiredModels.set(transport, map);
+  }
+  return map;
+}
+
+function isModelRetired(transport: ChatTransport, model: string): boolean {
+  return retirementsFor(transport).has(model);
+}
 
 /**
  * Test seam. Module-level caches are the right design for a serverless instance
@@ -371,19 +553,36 @@ export function __resetModelResolution(): void {
   cachedDiscovery = null;
   inFlightDiscovery = null;
   resolvedModel = null;
+  resolvedTransport = null;
+  retiredTransports.clear();
   retiredModels.clear();
 }
 
 /** Read-only view of the instance's resolution state, for the status probe. */
 export function __modelResolutionState(): {
   resolvedModel: string | null;
+  resolvedTransport: ChatTransport | null;
   discovery: Discovery | null;
   retired: Array<{ model: string; reason: string }>;
+  retiredTransports: Array<{ transport: ChatTransport; reason: string }>;
 } {
   return {
     resolvedModel,
+    resolvedTransport,
     discovery: cachedDiscovery,
-    retired: [...retiredModels.entries()].map(([model, reason]) => ({ model, reason })),
+    // Flattened across transports, with the transport named inside the reason:
+    // the wire shape `{ model, reason }` predates the transport layer and older
+    // clients still read it, so the extra dimension goes in the prose.
+    retired: [...retiredModels.entries()].flatMap(([transport, models]) =>
+      [...models.entries()].map(([model, reason]) => ({
+        model,
+        reason: `${reason} [${transport}]`,
+      })),
+    ),
+    retiredTransports: [...retiredTransports.entries()].map(([transport, reason]) => ({
+      transport,
+      reason,
+    })),
   };
 }
 
@@ -400,15 +599,6 @@ async function runDiscovery(
     return unavailableDiscovery(
       "ListModels skipped: too little of the request timeout budget remained to spend on it.",
     );
-  }
-
-  /* New keys with AQ. prefix do not have access to ListModels endpoint */
-  if (apiKey.startsWith("AQ.")) {
-    return {
-      generateContentModels: [],
-      state: "unavailable",
-      note: "ListModels returned HTTP 400; the preference list was tried directly.",
-    };
   }
 
   let res: Response;
@@ -428,11 +618,24 @@ async function runDiscovery(
   }
 
   if (!res.ok) {
-    // Status only — the body is not forwarded, here or anywhere.
+    // The body is read for classification only and then discarded — never
+    // forwarded, never logged. WHY read it at all: ListModels carries no
+    // request body, so a 400 here cannot mean "malformed request". It almost
+    // always means the credential was refused, and saying so here saves the
+    // operator from debugging a payload that was never the problem.
+    let detail = "";
+    try {
+      detail = (await res.text()).slice(0, 600);
+    } catch {
+      /* Body unreadable; the status alone still classifies below. */
+    }
+    const keyRefused = isInvalidKeyFailure(res.status, detail);
     return unavailableDiscovery(
       `ListModels returned HTTP ${res.status}; the preference list was tried directly.` +
-        (res.status === 401 || res.status === 403
-          ? " (That status usually means the key is restricted or rejected, which the next call will confirm.)"
+        (keyRefused
+          ? " ListModels sends no request body, so this is the API key being refused," +
+            " not a malformed request. " +
+            AUTH_REMEDY
           : ""),
     );
   }
@@ -508,8 +711,26 @@ interface CandidatePlan {
   unavailable: string[];
 }
 
-function planCandidates(discovery: Discovery | null): CandidatePlan {
-  const notRetired = (m: string) => !retiredModels.has(m);
+function planCandidates(discovery: Discovery | null, transport: ChatTransport): CandidatePlan {
+  const notRetired = (m: string) => !isModelRetired(transport, m);
+
+  /**
+   * DISCOVERY DOES NOT APPLY TO THE INTERACTIONS TRANSPORT.
+   *
+   * ListModels reports `supportedGenerationMethods`, and the method it reports
+   * is `generateContent`. It says nothing about which models the Interactions
+   * API serves, and it is itself a legacy `models/*` endpoint — on the very
+   * keys this transport exists for, it returns 400 and reports nothing at all.
+   * Filtering the Interactions chain through it would let a legacy catalogue
+   * veto a newer one, and would make a ListModels failure load-bearing for the
+   * primary transport, which is precisely what must not happen.
+   *
+   * So the Interactions chain is always the plain preference list. That is not
+   * a degraded mode here — it is the correct source of truth for this endpoint.
+   */
+  if (transport === "interactions") {
+    return { candidates: MODEL_PREFERENCE.filter(notRetired), unavailable: [] };
+  }
 
   if (!discovery || discovery.state !== "listed") {
     // Blind mode: the preference list, in order. This is the path that makes
@@ -549,22 +770,162 @@ function planCandidates(discovery: Discovery | null): CandidatePlan {
 
 /* ── Failure classification ───────────────────────────────────────────────── */
 
-/**
- * Is this failure about the MODEL, as opposed to the key, the quota or the
- * request? Only these fall through to the next candidate.
+/*
+ * The rules that used to live in a standalone `isModelSpecificFailure` now live
+ * in `classifyFailure` below, because adding a transport dimension made them
+ * mutually dependent: whether a 404 is about the model or about the endpoint
+ * depends on which transport delivered it, and a 400 can only be read as
+ * endpoint evidence if there is another endpoint left to try. Two functions
+ * that must be consulted in a particular order, in a particular combination,
+ * are one function.
  *
- * 404 is unambiguous: the name does not resolve for this project.
- *
- * 400 is only model-specific when the upstream error text actually names the
- * model — Google returns 400 for a genuinely malformed request too, and
- * treating that as "wrong model" would walk the entire chain three times to
- * report the same malformed-request error at the end. The body is read for this
- * one boolean and then discarded; it is never forwarded or logged.
+ * The rules themselves are unchanged: 404 on a URL carrying the model name is
+ * the model; a 400 is only model-specific when the upstream text actually names
+ * the model, because Google returns 400 for a genuinely malformed request too
+ * and treating that as "wrong model" would walk the entire chain to report the
+ * same malformed-request error at the end. Error bodies are read for these
+ * booleans and then discarded; they are never forwarded or logged.
  */
-function isModelSpecificFailure(status: number, detail: string, model: string): boolean {
-  if (status === 404) return true;
-  if (status !== 400) return false;
+
+/** Does the upstream error text mention this model by name? */
+function namesModel(detail: string, model: string): boolean {
   return detail.toLowerCase().includes(model.toLowerCase());
+}
+
+/**
+ * Is this failure a CONTENT refusal — the model or its safety layer declining
+ * this particular prompt — rather than a statement about the endpoint?
+ *
+ * Used only to protect the transport decision. A prompt that a policy filter
+ * rejects would be rejected identically on the other endpoint, so falling
+ * through to it would cost a round-trip, produce the same refusal, and then
+ * blame the wrong thing in the diagnosis.
+ */
+function isContentRefusal(detail: string): boolean {
+  const text = detail.toLowerCase();
+  return (
+    text.includes("safety") ||
+    text.includes("blocked") ||
+    text.includes("prohibited") ||
+    text.includes("recitation") ||
+    text.includes("harm_category")
+  );
+}
+
+/** Quota language, for the same protective purpose as `isContentRefusal`. */
+function isQuotaFailure(status: number, detail: string): boolean {
+  if (status === 429) return true;
+  const text = detail.toLowerCase();
+  return (
+    text.includes("resource_exhausted") ||
+    text.includes("quota") ||
+    text.includes("rate limit") ||
+    text.includes("billing")
+  );
+}
+
+/* ── Transport-aware failure classification ───────────────────────────────
+ *
+ * One function, because the ORDER of these tests is the whole design and
+ * scattering them makes that order invisible.
+ */
+type FailureClass =
+  /** The key was refused. No candidate on this transport can do better. */
+  | "auth"
+  /** This model name is wrong for this endpoint. Try the next candidate. */
+  | "model"
+  /** This ENDPOINT rejected the call. Try the next transport. */
+  | "endpoint"
+  /** Quota or a service wobble. Retry, bounded and jittered. */
+  | "transient"
+  /** Deterministic and not attributable. Surface it now. */
+  | "fatal";
+
+/**
+ * WHY A 404 MEANS DIFFERENT THINGS ON THE TWO TRANSPORTS.
+ *
+ * `generateContent` puts the model in the URL, so `POST
+ * /v1beta/models/{model}:generateContent` → 404 is a statement about that name:
+ * retire the model, try the next. `interactions` puts the model in the BODY and
+ * has one fixed URL, so a 404 there is a statement about the URL — the endpoint
+ * is not served for this caller — unless the error text names the model, in
+ * which case it is about the model after all. Getting this backwards would make
+ * the handler walk three model names against a URL that does not exist, or
+ * abandon a working endpoint because one model name was stale.
+ *
+ * `hasAlternativeTransport` is what keeps this honest at the end of the chain.
+ * A generic 400 with somewhere left to go is treated as evidence about the
+ * endpoint and the request falls through; a generic 400 with nowhere left to go
+ * is reported exactly as it was before this layer existed, so the pre-existing
+ * "a 400 that does not name the model is surfaced, not walked down the chain"
+ * behaviour is preserved rather than quietly turned into three round-trips.
+ */
+function classifyFailure(
+  status: number,
+  detail: string,
+  model: string,
+  modelInUrl: boolean,
+  hasAlternativeTransport: boolean,
+): FailureClass {
+  // 1. The credential. Checked first because every candidate and every
+  //    transport shares it, and because the Generative Language API answers a
+  //    bad key with 400/API_KEY_INVALID rather than 401 (see below).
+  if (isInvalidKeyFailure(status, detail)) return "auth";
+
+  // 2. Quota and service faults are never evidence about an endpoint or a
+  //    model. Retried in place.
+  if (isTransient(status)) return "transient";
+
+  // 3. An error that names the model is about the model, whichever transport
+  //    delivered it.
+  if ((status === 400 || status === 404) && namesModel(detail, model)) return "model";
+
+  // 4. A bare 404: the model when the model is in the URL, the endpoint when it
+  //    is not — and, when it is not and there is nowhere else to go, simply a
+  //    failure, because "switch transport" is not an available conclusion.
+  if (status === 404) {
+    if (modelInUrl) return "model";
+    return hasAlternativeTransport ? "endpoint" : "fatal";
+  }
+
+  // 5. Everything else in the 400/501 family. Content refusals and quota
+  //    phrasing are excluded so they cannot masquerade as endpoint evidence.
+  if (status === 400 || status === 501) {
+    if (isContentRefusal(detail) || isQuotaFailure(status, detail)) return "fatal";
+    return hasAlternativeTransport ? "endpoint" : "fatal";
+  }
+
+  return "fatal";
+}
+
+/**
+ * Does this failure mean the API key itself was refused?
+ *
+ * WHY THIS IS NOT SIMPLY `status === 401 || status === 403`: the Generative
+ * Language API returns **HTTP 400 with reason `API_KEY_INVALID`** for a
+ * malformed, truncated or revoked key — not 401, and not 403. A handler that
+ * classifies auth failures by status alone therefore reports a bad key as "the
+ * request was rejected", which sends the operator hunting through their request
+ * payload for a fault that lives in the API console.
+ *
+ * This was not hypothetical. A deployment with a correctly-plumbed key hit
+ * exactly this: `generateContent` returned 400, and so did ListModels — a bare
+ * GET with no body, nothing to malform. Two endpoints, one shared credential,
+ * both 400. That is the signature this function now recognises.
+ *
+ * 401 and 403 are still treated as auth failures; they occur for restricted
+ * keys and for projects without the API enabled.
+ */
+export function isInvalidKeyFailure(status: number, detail: string): boolean {
+  if (status === 401 || status === 403) return true;
+  if (status !== 400) return false;
+  const text = detail.toLowerCase();
+  return (
+    text.includes("api_key_invalid") ||
+    text.includes("api key not valid") ||
+    text.includes("invalid api key") ||
+    text.includes("api key expired")
+  );
 }
 
 function isTransient(status: number): boolean {
@@ -594,13 +955,19 @@ const AUTH_REMEDY =
   "Language API enabled. Then set GEMINI_API_KEY on the deployment and redeploy.";
 
 function authMessage(status: number): string {
-  return (
-    `Model API returned HTTP ${status} — the configured API key was rejected. ` +
-    (status === 401
+  const cause =
+    status === 401
       ? "The key is missing, malformed or revoked."
-      : "The key is valid but not permitted to make this call: it is restricted, or its project " +
-        "does not have access to this API.")
-  );
+      : status === 403
+        ? "The key is valid but not permitted to make this call: it is restricted, or its " +
+          "project does not have access to this API."
+        : // 400 / API_KEY_INVALID. Called out explicitly because the status code
+          // actively misleads here — everything else about a 400 says "your
+          // request was wrong", and the request was fine.
+          "The key string itself was refused (API_KEY_INVALID). This is usually a truncated " +
+          "or mistyped value, stray whitespace or a newline captured on paste, or a key from " +
+          "a different console than Google AI Studio. The request payload is not at fault.";
+  return `Model API returned HTTP ${status} — the configured API key was rejected. ${cause}`;
 }
 
 /** Read an error body ONLY to classify it. Never returned, never logged. */
@@ -627,6 +994,43 @@ function retryDelayMs(res: Response, attempt: number, random: () => number): num
 
 /* ── POST: the grounded answer ────────────────────────────────────────────── */
 
+/**
+ * The transport-neutral request, built once per question.
+ *
+ * WHY THIS TYPE EXISTS. Two endpoints now serialise the same question, and the
+ * one thing that must not vary between them is what the model is asked. The
+ * grounding, the capped history and the system instruction are decided here,
+ * once; a transport may only choose how to spell them on the wire. Without this
+ * split, the fallback path is a second prompt nobody tests, and the day it runs
+ * is the day the answers quietly change.
+ */
+interface GroundedRequest {
+  systemInstruction: string;
+  /** Oldest first, already capped and trimmed by the caller. */
+  history: ChatTurn[];
+  /** The retrieved context plus the question, as one user turn. */
+  userTurn: string;
+}
+
+/**
+ * What either transport reduces to. Everything downstream — the safety check,
+ * the truncation notice, the numeric audit, the wire payload — reads this and
+ * never a raw upstream shape.
+ */
+interface NormalisedAnswer {
+  /** Answer text, with model reasoning stripped. May be empty. */
+  text: string;
+  /** Set when the PROMPT was refused before generation ever started. */
+  blockReason?: string;
+  /** Upstream finish/status token, for the "stopped" vs "finished" distinction. */
+  finishReason?: string;
+  /** The output was cut short at the token cap. */
+  truncated: boolean;
+  usage: { promptTokens?: number; responseTokens?: number; totalTokens?: number };
+}
+
+/* ── generateContent wire shapes (unchanged) ─────────────────────────────── */
+
 interface GeminiPart {
   text?: string;
   thought?: boolean;
@@ -645,8 +1049,61 @@ interface GeminiResponseShape {
   };
 }
 
+/* ── Interactions wire shapes ─────────────────────────────────────────────
+ *
+ * Every field is optional and every reader below is defensive, on purpose. The
+ * documented response is an `Interaction` resource whose `steps` array is a
+ * CHRONOLOGICAL LOG — model thoughts, tool calls, then a `model_output` step —
+ * and the answer lives inside the `model_output` step's `content`, NOT at the
+ * top level. `interactions.create` returns only model-generated steps, but the
+ * set of step kinds is open: an SDK-side `output_text` convenience exists, new
+ * step types appear as features ship, and nothing about this schema promises
+ * that the answer is at a fixed index. So the parser walks, filters and
+ * concatenates rather than indexing, and an unrecognised step is skipped rather
+ * than being allowed to break the answer.
+ */
+
+interface InteractionPart {
+  type?: string;
+  text?: string;
+  thought?: boolean;
+}
+
+interface InteractionStep {
+  type?: string;
+  kind?: string;
+  step_type?: string;
+  content?: InteractionPart[] | string;
+  parts?: InteractionPart[];
+  text?: string;
+}
+
+interface InteractionShape {
+  object?: string;
+  status?: string;
+  steps?: InteractionStep[];
+  execution_steps?: InteractionStep[];
+  /** SDK convenience; not promised on the REST wire, but honoured if present. */
+  output_text?: string;
+  outputText?: string;
+  usage?: {
+    total_input_tokens?: number;
+    total_output_tokens?: number;
+    total_tokens?: number;
+    totalInputTokens?: number;
+    totalOutputTokens?: number;
+    totalTokens?: number;
+  };
+}
+
 type CallOutcome =
-  | { kind: "answered"; model: string; data: GeminiResponseShape; resolution: ModelResolution }
+  | {
+      kind: "answered";
+      model: string;
+      transport: ChatTransport;
+      answer: NormalisedAnswer;
+      resolution: ModelResolution;
+    }
   | {
       kind: "failed";
       errorKind: ChatErrorKind;
@@ -655,9 +1112,285 @@ type CallOutcome =
       resolution: ModelResolution;
     };
 
+/* ── Response parsing, one function per transport ─────────────────────────── */
+
 /**
- * Discovery, candidate ordering, the fallback chain and the retry loop, in one
- * place, against one overall timeout budget.
+ * generateContent. Never returns `null`: any JSON object is a well-formed (if
+ * empty) generateContent response, and the pre-existing behaviour — no
+ * candidate means `empty_response`, not "wrong endpoint" — is preserved exactly.
+ */
+function parseGenerateContent(data: unknown): NormalisedAnswer {
+  const body = (data ?? {}) as GeminiResponseShape;
+  const candidate = body.candidates?.[0];
+  const finishReason = candidate?.finishReason ?? "";
+
+  // Gemini 3 models may return internal reasoning parts alongside the answer;
+  // those carry `thought: true` and must not be shown to a reviewer as output.
+  const text = (candidate?.content?.parts ?? [])
+    .filter((p) => p.thought !== true && typeof p.text === "string")
+    .map((p) => p.text as string)
+    .join("")
+    .trim();
+
+  return {
+    text,
+    ...(body.promptFeedback?.blockReason ? { blockReason: body.promptFeedback.blockReason } : {}),
+    ...(finishReason ? { finishReason } : {}),
+    truncated: finishReason === "MAX_TOKENS",
+    usage: {
+      promptTokens: body.usageMetadata?.promptTokenCount,
+      responseTokens: body.usageMetadata?.candidatesTokenCount,
+      totalTokens: body.usageMetadata?.totalTokenCount,
+    },
+  };
+}
+
+/** Step kinds that carry the answer the reviewer is meant to read. */
+const ANSWER_STEP_RE = /^(model_output|output|message|assistant|text)$/;
+/**
+ * Step kinds that are explicitly NOT the answer: the model's own reasoning, and
+ * the tool traffic it generated on the way. Shown to a reviewer these would be
+ * indistinguishable from the answer, which is the same mistake `thought: true`
+ * parts already guard against on the other transport.
+ */
+const NON_ANSWER_STEP_RE = /(thought|reasoning|tool|function|code_execution|search|retrieval)/;
+/** Part types that are metadata rather than prose. */
+const NON_ANSWER_PART_RE = /(thought|reasoning|signature)/i;
+
+function partsToText(parts: InteractionPart[]): string {
+  return parts
+    .filter(
+      (p) =>
+        p &&
+        typeof p.text === "string" &&
+        p.thought !== true &&
+        !NON_ANSWER_PART_RE.test(String(p.type ?? "")),
+    )
+    .map((p) => p.text as string)
+    .join("");
+}
+
+/** Text carried by one step, whichever of the documented shapes it uses. */
+function stepText(step: InteractionStep): string {
+  if (Array.isArray(step.content)) return partsToText(step.content);
+  if (typeof step.content === "string") return step.content;
+  if (Array.isArray(step.parts)) return partsToText(step.parts);
+  if (typeof step.text === "string") return step.text;
+  return "";
+}
+
+/**
+ * Interactions. Returns `null` when the body is not an Interaction at all —
+ * which is a statement about the ENDPOINT, not about this question, and is
+ * therefore allowed to trigger a transport fallback upstream. Any other outcome
+ * (including "an Interaction that produced no text") is a real answer object.
+ */
+function parseInteraction(data: unknown): NormalisedAnswer | null {
+  if (!data || typeof data !== "object") return null;
+  const body = data as InteractionShape;
+
+  const steps = Array.isArray(body.steps)
+    ? body.steps
+    : Array.isArray(body.execution_steps)
+      ? body.execution_steps
+      : null;
+  const convenience =
+    typeof body.output_text === "string"
+      ? body.output_text
+      : typeof body.outputText === "string"
+        ? body.outputText
+        : null;
+
+  // Recognition test. Deliberately generous: anything carrying steps, an
+  // output_text, an interaction status or the `object: "interaction"` marker is
+  // this API answering. Anything else is some other service on this URL, and
+  // pretending to understand it would turn a transport problem into a silent
+  // empty answer.
+  const recognised =
+    steps !== null ||
+    convenience !== null ||
+    typeof body.status === "string" ||
+    body.object === "interaction";
+  if (!recognised) return null;
+
+  const kindOf = (s: InteractionStep) =>
+    String(s.type ?? s.kind ?? s.step_type ?? "").toLowerCase();
+
+  let text = "";
+  if (steps) {
+    // Pass 1: the documented answer steps, concatenated in order. `content` may
+    // hold several text parts, and a multi-step interaction may emit more than
+    // one output step, so this is a join and not a lookup.
+    text = steps
+      .filter((s) => ANSWER_STEP_RE.test(kindOf(s)))
+      .map(stepText)
+      .join("")
+      .trim();
+
+    // Pass 2: nothing matched the whitelist. Rather than report an empty answer
+    // because a step kind was renamed or added, take any step that is not
+    // recognisably reasoning or tool traffic and does carry text. This is the
+    // "tolerate unexpected step kinds" clause, and it is why this function does
+    // not assume a fixed index.
+    if (!text) {
+      text = steps
+        .filter((s) => !NON_ANSWER_STEP_RE.test(kindOf(s)))
+        .map(stepText)
+        .join("")
+        .trim();
+    }
+  }
+  // Pass 3: an SDK-shaped payload with no steps included in the response.
+  if (!text && convenience) text = convenience.trim();
+
+  /* Interaction `status`, mapped onto the vocabulary the rest of this file
+   * already speaks. `incomplete` is documented as "completed, but contains
+   * incomplete results (e.g. hitting max_tokens)" — the same condition
+   * generateContent calls MAX_TOKENS — and `budget_exceeded` is its
+   * thinking-token cousin. Neither is an error; both mean the reviewer is
+   * looking at a partial answer and must be told so. */
+  const status = String(body.status ?? "").toLowerCase();
+  const truncated = status === "incomplete" || status === "budget_exceeded";
+  const finishReason = status && status !== "completed" ? status.toUpperCase() : "";
+
+  return {
+    text,
+    ...(finishReason ? { finishReason } : {}),
+    truncated,
+    usage: {
+      promptTokens: body.usage?.total_input_tokens ?? body.usage?.totalInputTokens,
+      responseTokens: body.usage?.total_output_tokens ?? body.usage?.totalOutputTokens,
+      totalTokens: body.usage?.total_tokens ?? body.usage?.totalTokens,
+    },
+  };
+}
+
+/* ── The two transports ───────────────────────────────────────────────────── */
+
+interface TransportSpec {
+  id: ChatTransport;
+  /** Short human phrase used in messages and in the transport note. */
+  label: string;
+  /**
+   * True when the model name is part of the URL. This single bit is what makes
+   * a 404 mean "wrong model" on one transport and "wrong endpoint" on the
+   * other — see `classifyFailure`.
+   */
+  modelInUrl: boolean;
+  url: (model: string) => string;
+  body: (req: GroundedRequest, model: string) => unknown;
+  /** `null` means "this 2xx body is not this API's shape at all". */
+  parse: (data: unknown) => NormalisedAnswer | null;
+}
+
+/**
+ * The Interactions `input`, as a single string.
+ *
+ * WHY A STRING AND NOT A ROLE-TAGGED ARRAY. `input` accepts a Content, an array
+ * of Content, an array of Step, an array of Turn, or a plain string — and the
+ * only form the REST reference actually spells out is the string. The exact
+ * wire schema of the array forms is an SDK-shaped detail that cannot be
+ * verified from a sandbox with no network, and guessing at a request schema is
+ * the failure this change exists to fix; a guess that 400s here would look
+ * identical to the bug being repaired. So history is replayed statelessly as a
+ * transcript inside the one documented form.
+ *
+ * (Stateless is not a compromise, either: `store: false` precludes
+ * `previous_interaction_id`, so full history in the request is the only
+ * multi-turn mechanism available — and the correct one for a public demo.)
+ */
+function buildInteractionsInput(req: GroundedRequest): string {
+  if (req.history.length === 0) return req.userTurn;
+  const transcript = req.history
+    .map((t) => `${t.role === "user" ? "REVIEWER" : "ASSISTANT"}: ${t.text}`)
+    .join("\n\n");
+  return (
+    "PRIOR TURNS IN THIS CONVERSATION (context only; the current question is at the end):\n\n" +
+    `${transcript}\n\n----\n\n${req.userTurn}`
+  );
+}
+
+const TRANSPORTS: Record<ChatTransport, TransportSpec> = {
+  interactions: {
+    id: "interactions",
+    label: "Interactions endpoint",
+    modelInUrl: false,
+    url: () => INTERACTIONS_URL,
+    body: (req, model) => ({
+      model,
+      input: buildInteractionsInput(req),
+      /* Interaction-scoped, therefore re-sent on EVERY request. There is no
+       * server-side session carrying it forward — and with `store: false` there
+       * could not be. Omitting it on a follow-up would silently drop the
+       * anti-fabrication contract for exactly the questions a reviewer asks
+       * second. */
+      system_instruction: req.systemInstruction,
+      generation_config: {
+        max_output_tokens: MAX_OUTPUT_TOKENS,
+        seed: INTERACTIONS_SEED,
+        thinking_level: INTERACTIONS_THINKING_LEVEL,
+      },
+      /* `store` defaults to TRUE — the service retains the interaction for later
+       * retrieval. This is a public demo on someone's personal quota, and the
+       * text being posted is a reviewer's questions plus a slice of the
+       * pipeline bundle. None of that should accumulate in the project, and
+       * nothing here ever reads an interaction back, so retention would be pure
+       * liability. Explicit `false`, never omitted. */
+      store: false,
+    }),
+    parse: parseInteraction,
+  },
+  generateContent: {
+    id: "generateContent",
+    label: "legacy generateContent endpoint",
+    modelInUrl: true,
+    url: generateContentUrl,
+    body: (req) => ({
+      systemInstruction: { parts: [{ text: req.systemInstruction }] },
+      contents: [
+        ...req.history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+        { role: "user", parts: [{ text: req.userTurn }] },
+      ],
+      generationConfig: {
+        temperature: TEMPERATURE,
+        topP: 0.9,
+        candidateCount: 1,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+      },
+    }),
+    parse: parseGenerateContent,
+  },
+};
+
+/**
+ * Transport order for this request: the proven one first, then the rest of the
+ * preference list, with anything the endpoint itself has already rejected on
+ * this instance removed.
+ *
+ * The last-ditch clause mirrors `planCandidates`: if every transport has been
+ * retired, try them all again rather than returning a failure without having
+ * asked anything. A retirement is a cached observation, not a promise about the
+ * future — Google can enable an endpoint for a project at any time.
+ */
+function orderTransports(): ChatTransport[] {
+  const live = TRANSPORT_PREFERENCE.filter((t) => !retiredTransports.has(t));
+  const pool = live.length > 0 ? live : [...TRANSPORT_PREFERENCE];
+  if (resolvedTransport && pool.includes(resolvedTransport)) {
+    return [resolvedTransport, ...pool.filter((t) => t !== resolvedTransport)];
+  }
+  return pool;
+}
+
+/**
+ * Discovery, transport selection, candidate ordering, the fallback chains and
+ * the retry loop, in one place, against ONE overall timeout budget.
+ *
+ * The nesting is: transports → candidate models → bounded retries. Each level
+ * only moves outward when the level inside it has produced evidence that it
+ * should — a retry for a transient fault, the next model for a name the
+ * endpoint rejects, the next transport for a rejection of the endpoint itself.
+ * All three share the single 25-second budget, because a reviewer waiting on an
+ * answer does not care how many layers of fallback are spending their time.
  *
  * Returns a structured outcome rather than a `Response` so the caller can attach
  * the same `resolution` object to both the success and the failure payload —
@@ -666,7 +1399,7 @@ type CallOutcome =
  */
 async function callModelWithFallback(
   apiKey: string,
-  payload: Record<string, unknown>,
+  req: GroundedRequest,
   deps: ChatDeps,
 ): Promise<CallOutcome> {
   const now = deps.now ?? (() => Date.now());
@@ -676,22 +1409,36 @@ async function callModelWithFallback(
   const deadline = now() + UPSTREAM_TIMEOUT_MS;
   const remaining = () => deadline - now();
 
+  /* ListModels. Its failure is already degraded to blind mode inside
+   * `discoverOnce`, and it is deliberately consulted only by the
+   * generateContent plan (see `planCandidates`) — a 400 here must not retire a
+   * candidate, must not retire a transport, and must not change which endpoint
+   * is tried first. On an auth key it is expected to fail. */
   const discovery = await discoverOnce(apiKey, deps, remaining());
-  const plan = planCandidates(discovery);
 
-  /**
-   * The cached winner goes first. This is the "subsequent requests go straight
-   * there" half of the fallback requirement: once something has answered, the
-   * chain is not walked again unless that model itself stops working.
-   */
-  const ordered =
-    resolvedModel && !retiredModels.has(resolvedModel)
-      ? [resolvedModel, ...plan.candidates.filter((m) => m !== resolvedModel)]
-      : plan.candidates;
-
+  const transports = orderTransports();
   const attempts: ModelAttempt[] = [];
+  /** Models retired mid-chain. Kept separately from `attempts` so that a
+   *  TRANSPORT being skipped never inflates the model-level `skipped` list. */
+  const skippedModels: string[] = [];
+  const transportNotes: string[] = [];
+  /** Transports whose response said the KEY was refused. See below. */
+  const keyRefusedBy: ChatTransport[] = [];
 
-  const resolution = (selected?: string): ModelResolution => ({
+  // "Where are we" state, read by `resolution()` while the loops run.
+  let transport: ChatTransport = transports[0];
+  let plan: CandidatePlan = { candidates: [], unavailable: [] };
+  let ordered: string[] = [];
+
+  const describeTransports = (): string => {
+    const head =
+      `Transport order: ${transports.map((t) => TRANSPORTS[t].label).join(" → ")}. ` +
+      "Interactions is POST /v1beta/interactions (model in the body); generateContent is " +
+      "POST /v1beta/models/{model}:generateContent (model in the URL).";
+    return [head, ...transportNotes].join(" ");
+  };
+
+  const resolution = (selected?: string, answeredOn?: ChatTransport): ModelResolution => ({
     ...(MODEL_OVERRIDE ? { requested: MODEL_OVERRIDE } : {}),
     preference: [...MODEL_PREFERENCE],
     candidates: [...ordered],
@@ -699,51 +1446,52 @@ async function callModelWithFallback(
     discovery: discovery.state,
     discoveryNote: discovery.note,
     attempts: [...attempts],
-    skipped: attempts.filter((a) => a.outcome === "skipped").map((a) => a.model),
+    skipped: [...new Set(skippedModels)],
     unavailable: [...plan.unavailable],
+    transports: [...transports],
+    ...(answeredOn ? { transport: answeredOn } : {}),
+    transportNote: describeTransports(),
   });
 
-  for (const model of ordered) {
-    let attemptCount = 0;
+  for (let ti = 0; ti < transports.length; ti += 1) {
+    transport = transports[ti];
+    const spec = TRANSPORTS[transport];
+    /** Is there somewhere to fall through TO? Nothing is treated as evidence
+     *  about an endpoint when there is no alternative endpoint left — in that
+     *  position the failure is simply reported, exactly as it was before this
+     *  layer existed. */
+    const hasAlternativeTransport = ti < transports.length - 1;
 
-    while (attemptCount < RETRY_ATTEMPTS_PER_MODEL) {
-      attemptCount += 1;
+    plan = planCandidates(discovery, transport);
 
-      const budget = remaining();
-      if (budget <= 0) {
-        attempts.push({
-          model,
-          outcome: "failed",
-          attempts: attemptCount - 1,
-          reason: "the overall timeout budget was exhausted before this attempt",
-        });
-        return {
-          kind: "failed",
-          errorKind: "timeout",
-          message: `The model did not respond within ${UPSTREAM_TIMEOUT_MS / 1000}s.`,
-          resolution: resolution(),
-        };
-      }
+    /**
+     * The cached winner goes first. This is the "subsequent requests go straight
+     * there" half of the fallback requirement: once something has answered, the
+     * chain is not walked again unless that model itself stops working.
+     */
+    ordered =
+      resolvedModel && !isModelRetired(transport, resolvedModel)
+        ? [resolvedModel, ...plan.candidates.filter((m) => m !== resolvedModel)]
+        : plan.candidates;
 
-      let upstream: Response;
-      try {
-        upstream = await deps.fetchImpl(generateContentUrl(model), {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-goog-api-key": apiKey,
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(budget),
-        });
-      } catch (err) {
-        const name = (err as { name?: string })?.name ?? "";
-        if (name === "TimeoutError" || name === "AbortError") {
+    /** Set when the ENDPOINT (not a model) rejected the call. */
+    let switchTransport = false;
+
+    for (const model of ordered) {
+      if (switchTransport) break;
+      let attemptCount = 0;
+
+      while (attemptCount < RETRY_ATTEMPTS_PER_MODEL) {
+        attemptCount += 1;
+
+        const budget = remaining();
+        if (budget <= 0) {
           attempts.push({
             model,
+            transport,
             outcome: "failed",
-            attempts: attemptCount,
-            reason: "the call was abandoned at the request timeout",
+            attempts: attemptCount - 1,
+            reason: "the overall timeout budget was exhausted before this attempt",
           });
           return {
             kind: "failed",
@@ -752,102 +1500,300 @@ async function callModelWithFallback(
             resolution: resolution(),
           };
         }
-        // Deliberately not `String(err)`: a network error can carry the request
-        // URL and, in some runtimes, request headers. Not retried — see the
-        // retry-policy note above.
-        attempts.push({
-          model,
-          outcome: "failed",
-          attempts: attemptCount,
-          reason: "the model API could not be reached from the server",
-        });
-        return {
-          kind: "failed",
-          errorKind: "upstream_error",
-          message: "The model API could not be reached from the server.",
-          resolution: resolution(),
-        };
-      }
 
-      if (upstream.ok) {
-        let data: GeminiResponseShape;
+        let upstream: Response;
         try {
-          data = (await upstream.json()) as GeminiResponseShape;
-        } catch {
+          upstream = await deps.fetchImpl(spec.url(model), {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              // Key in a header on BOTH transports. Never `?key=`.
+              "x-goog-api-key": apiKey,
+            },
+            body: JSON.stringify(spec.body(req, model)),
+            signal: AbortSignal.timeout(budget),
+          });
+        } catch (err) {
+          const name = (err as { name?: string })?.name ?? "";
+          if (name === "TimeoutError" || name === "AbortError") {
+            attempts.push({
+              model,
+              transport,
+              outcome: "failed",
+              attempts: attemptCount,
+              reason: "the call was abandoned at the request timeout",
+            });
+            return {
+              kind: "failed",
+              errorKind: "timeout",
+              message: `The model did not respond within ${UPSTREAM_TIMEOUT_MS / 1000}s.`,
+              resolution: resolution(),
+            };
+          }
+          // Deliberately not `String(err)`: a network error can carry the request
+          // URL and, in some runtimes, request headers. Not retried — see the
+          // retry-policy note above. Not a transport fallback either: a DNS or
+          // egress fault reaches the second endpoint exactly as it reached the
+          // first, and pretending otherwise would double the wait before the
+          // reviewer gets their scripted answer.
           attempts.push({
             model,
+            transport,
             outcome: "failed",
-            status: upstream.status,
             attempts: attemptCount,
-            reason: "the response could not be parsed",
+            reason: "the model API could not be reached from the server",
           });
           return {
             kind: "failed",
             errorKind: "upstream_error",
-            message: "The model API returned a response that could not be parsed.",
+            message: "The model API could not be reached from the server.",
             resolution: resolution(),
           };
         }
 
-        // The winner, cached for the life of the instance.
-        resolvedModel = model;
-        attempts.push({
-          model,
-          outcome: "answered",
-          status: upstream.status,
-          attempts: attemptCount,
-          reason: attemptCount === 1 ? "answered" : `answered on attempt ${attemptCount}`,
-        });
-        return { kind: "answered", model, data, resolution: resolution(model) };
-      }
+        if (upstream.ok) {
+          let data: unknown;
+          try {
+            data = await upstream.json();
+          } catch {
+            /* A 2xx that is not JSON. On the primary transport that is more
+             * likely to be a proxy or an error page than this API, so it is
+             * worth one look at the other endpoint before giving up. */
+            if (hasAlternativeTransport) {
+              const reason = `returned a 2xx that was not JSON (HTTP ${upstream.status})`;
+              retiredTransports.set(transport, `the ${spec.label} ${reason}`);
+              transportNotes.push(`The ${spec.label} ${reason}; the next transport was tried.`);
+              attempts.push({
+                model,
+                transport,
+                outcome: "skipped",
+                status: upstream.status,
+                attempts: attemptCount,
+                reason: `${reason}; switching transport`,
+              });
+              switchTransport = true;
+              break;
+            }
+            attempts.push({
+              model,
+              transport,
+              outcome: "failed",
+              status: upstream.status,
+              attempts: attemptCount,
+              reason: "the response could not be parsed",
+            });
+            return {
+              kind: "failed",
+              errorKind: "upstream_error",
+              message: "The model API returned a response that could not be parsed.",
+              resolution: resolution(),
+            };
+          }
 
-      const status = upstream.status;
-      const detail = await readErrorDetail(upstream);
+          const parsed = spec.parse(data);
+          if (!parsed) {
+            /* 2xx, valid JSON, and not this API's shape. Only the Interactions
+             * parser can say this, and when it does the honest reading is "this
+             * URL is not serving the API we think it is" — which is a transport
+             * fact, not an answer. */
+            const reason = "returned a response that is not in this API's shape";
+            if (hasAlternativeTransport) {
+              retiredTransports.set(transport, `the ${spec.label} ${reason}`);
+              transportNotes.push(`The ${spec.label} ${reason}; the next transport was tried.`);
+              attempts.push({
+                model,
+                transport,
+                outcome: "skipped",
+                status: upstream.status,
+                attempts: attemptCount,
+                reason: `${reason}; switching transport`,
+              });
+              switchTransport = true;
+              break;
+            }
+            attempts.push({
+              model,
+              transport,
+              outcome: "failed",
+              status: upstream.status,
+              attempts: attemptCount,
+              reason,
+            });
+            return {
+              kind: "failed",
+              errorKind: "upstream_error",
+              message: "The model API returned a response that could not be parsed.",
+              resolution: resolution(),
+            };
+          }
 
-      /* 401/403 — stop everything. Every candidate uses the same credential, so
-       * walking the chain would produce the same rejection three more times and
-       * bury the one fact that matters. */
-      if (status === 401 || status === 403) {
-        attempts.push({
-          model,
-          outcome: "failed",
-          status,
-          attempts: attemptCount,
-          reason: "the API key was rejected; no other candidate could do better",
-        });
-        return {
-          kind: "failed",
-          errorKind: "upstream_auth",
-          message: authMessage(status),
-          remedy: AUTH_REMEDY,
-          resolution: resolution(),
-        };
-      }
-
-      /* Model-specific — retire it and move down the chain. */
-      if (isModelSpecificFailure(status, detail, model)) {
-        const reason =
-          status === 404
-            ? "not available to this API key's project (HTTP 404)"
-            : "rejected by name by the model service (HTTP 400)";
-        retiredModels.set(model, reason);
-        if (resolvedModel === model) resolvedModel = null;
-        attempts.push({ model, outcome: "skipped", status, attempts: attemptCount, reason });
-        break; // next candidate
-      }
-
-      /* Transient — bounded, jittered retry inside the same budget. */
-      if (isTransient(status)) {
-        if (attemptCount < RETRY_ATTEMPTS_PER_MODEL) {
-          const wait = Math.min(
-            retryDelayMs(upstream, attemptCount, random),
-            Math.max(0, remaining()),
-          );
-          if (wait > 0) await sleep(wait);
-          continue;
+          // The winners, cached for the life of the instance.
+          resolvedModel = model;
+          resolvedTransport = transport;
+          attempts.push({
+            model,
+            transport,
+            outcome: "answered",
+            status: upstream.status,
+            attempts: attemptCount,
+            reason: attemptCount === 1 ? "answered" : `answered on attempt ${attemptCount}`,
+          });
+          return {
+            kind: "answered",
+            model,
+            transport,
+            answer: parsed,
+            resolution: resolution(model, transport),
+          };
         }
+
+        const status = upstream.status;
+        const detail = await readErrorDetail(upstream);
+        const verdict = classifyFailure(
+          status,
+          detail,
+          model,
+          spec.modelInUrl,
+          hasAlternativeTransport,
+        );
+
+        /* ── Key refused ───────────────────────────────────────────────────
+         * Stop this transport: every candidate on it uses the same credential,
+         * so walking the chain would produce the same rejection three more
+         * times and bury the one fact that matters.
+         *
+         * But do NOT stop the request while another transport is untried, and
+         * do NOT retire the transport. This is the crux of the auth-key
+         * hypothesis: if one endpoint accepts a key that the other refuses,
+         * hard-stopping on the first refusal would report "your key is invalid"
+         * about a key that demonstrably works — which is precisely the wrong
+         * diagnosis, and precisely the one this deployment was living with.
+         * Only when EVERY transport has refused the key is the key itself the
+         * defensible conclusion.
+         *
+         * This deliberately tests for more than 401/403: the Generative
+         * Language API answers a malformed or revoked key with HTTP 400 /
+         * API_KEY_INVALID. See `isInvalidKeyFailure`. */
+        if (verdict === "auth") {
+          keyRefusedBy.push(transport);
+          attempts.push({
+            model,
+            transport,
+            outcome: "failed",
+            status,
+            attempts: attemptCount,
+            reason: `the API key was rejected by the ${spec.label}`,
+          });
+
+          if (hasAlternativeTransport) {
+            transportNotes.push(
+              `The ${spec.label} refused the API key (HTTP ${status}); the ` +
+                `${TRANSPORTS[transports[ti + 1]].label} was tried next, because the two ` +
+                "endpoints do not necessarily accept the same kind of key.",
+            );
+            switchTransport = true;
+            break;
+          }
+
+          const bothRefused = new Set(keyRefusedBy).size > 1;
+          return {
+            kind: "failed",
+            errorKind: "upstream_auth",
+            message:
+              `${authMessage(status)} ` +
+              (bothRefused
+                ? "Both the Interactions endpoint and the legacy generateContent endpoint refused " +
+                  "this key, which rules out the endpoint and leaves the key itself."
+                : `Reported by the ${spec.label}.`),
+            remedy: AUTH_REMEDY,
+            resolution: resolution(),
+          };
+        }
+
+        /* ── The endpoint itself was rejected — change transport ───────────
+         * This is the branch the whole change exists for. A 404 on a URL that
+         * does not carry a model name, or a 400 that is neither a content
+         * refusal nor a quota fault nor a key rejection, is a statement about
+         * THIS ENDPOINT for THIS caller. The model chain cannot fix it and
+         * retrying cannot fix it; the other endpoint might.
+         *
+         * Retired for the life of the instance so the second question does not
+         * pay for the discovery the first one already did. */
+        if (verdict === "endpoint") {
+          const reason = `the ${spec.label} rejected the call (HTTP ${status})`;
+          retiredTransports.set(transport, reason);
+          transportNotes.push(
+            `${reason.charAt(0).toUpperCase()}${reason.slice(1)} — not a content refusal and not ` +
+              "a quota fault, so it implicates the endpoint or the key type rather than the " +
+              `question. Fell through to the ${TRANSPORTS[transports[ti + 1]].label}.`,
+          );
+          attempts.push({
+            model,
+            transport,
+            outcome: "skipped",
+            status,
+            attempts: attemptCount,
+            reason: `${reason}; switching transport`,
+          });
+          switchTransport = true;
+          break;
+        }
+
+        /* ── Model-specific — retire it and move down the chain. ─────────── */
+        if (verdict === "model") {
+          const reason =
+            status === 404
+              ? "not available to this API key's project (HTTP 404)"
+              : "rejected by name by the model service (HTTP 400)";
+          retirementsFor(transport).set(model, reason);
+          if (resolvedModel === model) resolvedModel = null;
+          skippedModels.push(model);
+          attempts.push({
+            model,
+            transport,
+            outcome: "skipped",
+            status,
+            attempts: attemptCount,
+            reason,
+          });
+          break; // next candidate
+        }
+
+        /* ── Transient — bounded, jittered retry inside the same budget. ─── */
+        if (verdict === "transient") {
+          if (attemptCount < RETRY_ATTEMPTS_PER_MODEL) {
+            const wait = Math.min(
+              retryDelayMs(upstream, attemptCount, random),
+              Math.max(0, remaining()),
+            );
+            if (wait > 0) await sleep(wait);
+            continue;
+          }
+          attempts.push({
+            model,
+            transport,
+            outcome: "failed",
+            status,
+            attempts: attemptCount,
+            reason: statusPhrase(status),
+          });
+          return {
+            kind: "failed",
+            errorKind: "upstream_error",
+            message:
+              `Model API returned HTTP ${status} for ${model} after ${attemptCount} attempts — ` +
+              `${statusPhrase(status)}.`,
+            resolution: resolution(),
+          };
+        }
+
+        /* Anything else (a 400 that does not name the model with no other
+         * transport left to try, a 4xx we have no story for): deterministic.
+         * Surface it now rather than spending the reviewer's time proving it
+         * three times. */
         attempts.push({
           model,
+          transport,
           outcome: "failed",
           status,
           attempts: attemptCount,
@@ -856,35 +1802,27 @@ async function callModelWithFallback(
         return {
           kind: "failed",
           errorKind: "upstream_error",
-          message:
-            `Model API returned HTTP ${status} for ${model} after ${attemptCount} attempts — ` +
-            `${statusPhrase(status)}.`,
+          message: `Model API returned HTTP ${status} — ${statusPhrase(status)}.`,
           resolution: resolution(),
         };
       }
+    }
 
-      /* Anything else (a 400 that does not name the model, a 4xx we have no
-       * story for): deterministic. Surface it now rather than spending the
-       * reviewer's time proving it three times. */
-      attempts.push({
-        model,
-        outcome: "failed",
-        status,
-        attempts: attemptCount,
-        reason: statusPhrase(status),
-      });
-      return {
-        kind: "failed",
-        errorKind: "upstream_error",
-        message: `Model API returned HTTP ${status} — ${statusPhrase(status)}. Detail: ${detail}`,
-        resolution: resolution(),
-      };
+    /* Every candidate on this transport was retired, and the transport itself
+     * never objected. If another endpoint is available it gets the same
+     * question: a name the legacy catalogue has never heard of is exactly the
+     * kind of name that exists on the newer one, and vice versa. */
+    if (!switchTransport && hasAlternativeTransport && ordered.length > 0) {
+      transportNotes.push(
+        `No candidate model was usable on the ${spec.label}; the ` +
+          `${TRANSPORTS[transports[ti + 1]].label} was tried with the same preference list.`,
+      );
     }
   }
 
-  /* Every candidate was retired. This is the "the project has none of these
-   * models" case, and the message says exactly that, with the list, because the
-   * fix is to set GEMINI_MODEL to a name the project does have. */
+  /* Every candidate on every transport was retired. This is the "the project
+   * has none of these models" case, and the message says exactly that, with the
+   * list, because the fix is to set GEMINI_MODEL to a name the project has. */
   const tried = attempts.map((a) => `${a.model} (HTTP ${a.status ?? "—"})`).join(", ");
   return {
     kind: "failed",
@@ -914,11 +1852,24 @@ async function callModelWithFallback(
  */
 export function handleChatStatus(deps: ChatDeps = defaultDeps): Response {
   const state = __modelResolutionState();
-  const plan = planCandidates(state.discovery);
+  const transports = orderTransports();
+  // The transport the NEXT question would use, which is what every field below
+  // is describing. The candidate list is a property of the transport (see
+  // `planCandidates`), so reporting one without the other would be misleading.
+  const transport = transports[0];
+  const plan = planCandidates(state.discovery, transport);
   const candidates =
-    state.resolvedModel && !retiredModels.has(state.resolvedModel)
+    state.resolvedModel && !isModelRetired(transport, state.resolvedModel)
       ? [state.resolvedModel, ...plan.candidates.filter((m) => m !== state.resolvedModel)]
       : plan.candidates;
+
+  const transportNote = state.resolvedTransport
+    ? `Live answers on this instance are going over the ${TRANSPORTS[state.resolvedTransport].label}.`
+    : `No live question has been answered on this instance yet; the ${TRANSPORTS[transport].label} ` +
+      "will be tried first.";
+  const retiredNote = state.retiredTransports
+    .map((r) => ` Retired this instance: ${r.reason}.`)
+    .join("");
 
   const body: ChatStatusResponse = {
     configured: Boolean(deps.getApiKey()?.trim()),
@@ -935,6 +1886,16 @@ export function handleChatStatus(deps: ChatDeps = defaultDeps): Response {
       state.discovery?.note ??
       "ListModels has not run on this instance yet; it runs once, on the first live question.",
     retired: state.retired,
+
+    /* The transport half of the diagnosis. This is what makes one `curl`
+     * against GET /api/chat answer the question the original failure could not:
+     * not just "is a key present" but "which endpoint can this key actually
+     * use". Still synchronous and network-free — it reports what the instance
+     * has learned, and never spends a round-trip to learn more. */
+    transport: state.resolvedTransport,
+    transports,
+    transportNote: `${transportNote}${retiredNote}`,
+    ...(TRANSPORT_OVERRIDE ? { transportOverride: TRANSPORT_OVERRIDE } : {}),
   };
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -1045,23 +2006,18 @@ export async function handleChatPost(
     `${context.text}\n\n` +
     `----\nQUESTION: ${question}`;
 
-  const payload = {
-    systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-    contents: [
-      ...history.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
-      { role: "user", parts: [{ text: userTurn }] },
-    ],
-    generationConfig: {
-      temperature: TEMPERATURE,
-      topP: 0.9,
-      candidateCount: 1,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-    },
+  /* The transport-neutral request. What the model is asked is decided once,
+   * here; how it is spelled on the wire is the transport's business. */
+  const groundedRequest: GroundedRequest = {
+    systemInstruction: SYSTEM_INSTRUCTION,
+    history,
+    userTurn,
   };
 
-  /* 6. Call upstream: discovery, candidate chain, bounded retry. Key in a
-   *    header on every one of those calls, never in a URL. */
-  const outcome = await callModelWithFallback(apiKey, payload, deps);
+  /* 6. Call upstream: discovery, transport chain, candidate chain, bounded
+   *    retry — all inside one budget. Key in a header on every one of those
+   *    calls, never in a URL. */
+  const outcome = await callModelWithFallback(apiKey, groundedRequest, deps);
 
   if (outcome.kind === "failed") {
     return fail(outcome.errorKind, redact(outcome.message, apiKey), {
@@ -1070,19 +2026,22 @@ export async function handleChatPost(
     });
   }
 
-  const data = outcome.data;
+  /* 7. Interpret the answer. Both transports have already been reduced to a
+   *    `NormalisedAnswer`, so everything below is transport-independent — which
+   *    is the point: the safety check, the truncation notice and the numeric
+   *    audit must behave identically whichever endpoint answered, or the
+   *    fallback path becomes a second, untested product.
+   *
+   *    A safety block is NOT an error to swallow — the client says so
+   *    explicitly rather than presenting silence as an answer. */
+  const { blockReason, finishReason = "", truncated, text: answerText } = outcome.answer;
 
-  /* 7. Interpret the candidate. A safety block is NOT an error to swallow —
-   *    the client says so explicitly rather than presenting silence as an answer. */
-  const blockReason = data.promptFeedback?.blockReason;
   if (blockReason) {
     return fail("blocked", `The model declined to answer this prompt (reason: ${blockReason}).`, {
       resolution: outcome.resolution,
     });
   }
 
-  const candidate = data.candidates?.[0];
-  const finishReason = candidate?.finishReason ?? "";
   if (BLOCKING_FINISH_REASONS.has(finishReason)) {
     return fail(
       "blocked",
@@ -1091,28 +2050,19 @@ export async function handleChatPost(
     );
   }
 
-  // Gemini 3 models may return internal reasoning parts alongside the answer;
-  // those carry `thought: true` and must not be shown to a reviewer as output.
-  const answerText = (candidate?.content?.parts ?? [])
-    .filter((p) => p.thought !== true && typeof p.text === "string")
-    .map((p) => p.text as string)
-    .join("")
-    .trim();
-
   if (!answerText) {
     return fail(
       "empty_response",
-      finishReason === "MAX_TOKENS"
+      truncated
         ? "The model hit its output limit before producing an answer. Try a narrower question."
         : "The model returned no text.",
       { resolution: outcome.resolution },
     );
   }
 
-  const answer =
-    finishReason === "MAX_TOKENS"
-      ? `${answerText}\n\n[Answer truncated at the ${MAX_OUTPUT_TOKENS}-token output cap.]`
-      : answerText;
+  const answer = truncated
+    ? `${answerText}\n\n[Answer truncated at the ${MAX_OUTPUT_TOKENS}-token output cap.]`
+    : answerText;
 
   /* 8. Numeric self-audit. The system instruction forbids stating a figure that
    *    is not in the context; this is the part that CHECKS rather than asks.
@@ -1129,6 +2079,9 @@ export async function handleChatPost(
     answer: redact(answer, apiKey),
     // The model that ACTUALLY answered, not the configured first choice.
     model: outcome.model,
+    // And the endpoint it answered on. On a deployment where one of the two
+    // refuses the key, this one word is the whole diagnosis.
+    transport: outcome.transport,
     context: {
       approxTokens: context.approxTokens,
       budgetTokens: context.budgetTokens,
@@ -1139,10 +2092,6 @@ export async function handleChatPost(
     },
     audit,
     resolution: outcome.resolution,
-    usage: {
-      promptTokens: data.usageMetadata?.promptTokenCount,
-      responseTokens: data.usageMetadata?.candidatesTokenCount,
-      totalTokens: data.usageMetadata?.totalTokenCount,
-    },
+    usage: outcome.answer.usage,
   });
 }

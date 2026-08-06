@@ -48,6 +48,7 @@ import {
 import {
   GEMINI_MODEL,
   MODEL_PREFERENCE,
+  TRANSPORT_PREFERENCE,
   __resetModelResolution,
   handleChatPost,
   handleChatStatus,
@@ -103,7 +104,59 @@ function geminiOk(text: string): Response {
   );
 }
 
+/**
+ * An Interactions API response, in the documented `Interaction` shape: a
+ * chronological `steps` array whose answer lives inside a `model_output` step's
+ * `content`, NOT at the top level. `extra` prepends the sort of steps a real
+ * multi-step interaction emits (thoughts, tool traffic), so the parser is
+ * exercised against a log rather than against a one-element array.
+ */
+function interactionOk(
+  text: string,
+  extra: Array<Record<string, unknown>> = [],
+  overrides: Record<string, unknown> = {},
+): Response {
+  return new Response(
+    JSON.stringify({
+      id: "v1_TEST",
+      object: "interaction",
+      model: "gemini-3.6-flash",
+      status: "completed",
+      steps: [...extra, { type: "model_output", content: [{ type: "text", text }] }],
+      usage: { total_input_tokens: 3000, total_output_tokens: 120, total_tokens: 3120 },
+      ...overrides,
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
 const FAKE_KEY = "AIza-TEST-KEY-DO-NOT-USE-0000000000";
+
+const INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
+const isInteractions = (url: string) => url.endsWith("/interactions");
+
+/**
+ * The default mocked reply for the Interactions endpoint.
+ *
+ * WHY THE DEFAULT IS A REFUSAL. The server now tries Interactions FIRST on
+ * every request, so without an explicit answer here every pre-existing scenario
+ * below would silently become a test of a different endpoint from the one it
+ * was written to pin. These scenarios exist to pin the `generateContent`
+ * contract — its payload shape, its 404 fallback, its retry policy, its auth
+ * dead end — and that contract must not regress just because a second transport
+ * appeared in front of it. So the default mock models a project that serves
+ * only the legacy endpoint (the `AIza`-key world, which is also the world of
+ * `FAKE_KEY`), and section 13 covers the Interactions transport explicitly with
+ * its own mocks.
+ */
+function interactionsUnavailable(): Response {
+  return new Response(
+    JSON.stringify({
+      error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" },
+    }),
+    { status: 404, headers: { "content-type": "application/json" } },
+  );
+}
 
 interface Captured {
   url: string;
@@ -112,7 +165,12 @@ interface Captured {
 }
 
 function makeDeps(
-  overrides: Partial<ChatDeps> & { captured?: Captured[]; respond?: () => Response } = {},
+  overrides: Partial<ChatDeps> & {
+    captured?: Captured[];
+    respond?: () => Response;
+    /** Interactions handler. Defaults to "this project has no such endpoint". */
+    interactions?: () => Response;
+  } = {},
 ): ChatDeps {
   const captured = overrides.captured ?? [];
   return {
@@ -122,11 +180,15 @@ function makeDeps(
     fetchImpl:
       overrides.fetchImpl ??
       (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
         captured.push({
-          url: String(input),
+          url,
           headers: (init?.headers ?? {}) as Record<string, string>,
           body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
         });
+        if (isInteractions(url)) {
+          return overrides.interactions ? overrides.interactions() : interactionsUnavailable();
+        }
         return overrides.respond ? overrides.respond() : geminiOk("Grounded answer.");
       }),
   };
@@ -378,15 +440,11 @@ async function main(): Promise<void> {
    * this block is about. Finding it by URL asserts exactly what these
    * assertions always meant and stops them being hostage to call ordering.
    */
-  const call = captured.find((c) => c.url.includes("/interactions")) as Captured;
+  const call = captured.find((c) => c.url.includes(":generateContent")) as Captured;
   const probe = captured.find((c) => c.url.includes("/models?")) as Captured | undefined;
   check("the first live request probes ListModels", Boolean(probe), captured.map((c) => c.url).join(" | "));
   check("the ListModels probe carries the key in the header, not the URL", Boolean(probe) && probe!.headers["x-goog-api-key"] === FAKE_KEY && !probe!.url.includes(FAKE_KEY) && !probe!.url.includes("key="), probe?.url);
-  check(
-    "calls the pinned model endpoint",
-    call.url === `https://generativelanguage.googleapis.com/v1beta/interactions`,
-    call.url,
-  );
+  check("calls the pinned model endpoint", call.url === `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, call.url);
   check("key travels in the x-goog-api-key header", call.headers["x-goog-api-key"] === FAKE_KEY);
   check("key is NOT in the URL", !call.url.includes(FAKE_KEY) && !call.url.includes("key="));
   check("a system instruction is sent", typeof call.body.systemInstruction === "object");
@@ -396,12 +454,12 @@ async function main(): Promise<void> {
   );
   check(
     "max output tokens are capped",
-    (call.body.generation_config as { maxOutputTokens?: number })?.maxOutputTokens === 1400,
+    (call.body.generationConfig as { maxOutputTokens?: number })?.maxOutputTokens === 1400,
   );
   check(
     "the prompt carries the retrieved context, not the whole bundle",
-    typeof call.body.input === "string" && call.body.input.length < 60_000,
-    String((call.body.input as string)?.length),
+    JSON.stringify(call.body.contents).length < 60_000,
+    String(JSON.stringify(call.body.contents).length),
   );
 
   // 5c. History cap.
@@ -412,13 +470,12 @@ async function main(): Promise<void> {
   const capCaptured: Captured[] = [];
   await handleChatPost(post({ question: "and TX-04?", history: longHistory }), makeDeps({ captured: capCaptured }));
   // Same reasoning as above: pick the generation, not whatever came first.
-  const capCall = capCaptured.find((c) => c.url.includes("/interactions")) as Captured;
-  const inputStr = capCall.body.input as string;
-  const userMatches = (inputStr.match(/USER:/g) || []).length;
+  const capCall = capCaptured.find((c) => c.url.includes(":generateContent")) as Captured;
+  const contents = capCall.body.contents as unknown[];
   check(
-    "conversation length is preserved in input string",
-    userMatches === Math.floor(MAX_HISTORY_TURNS / 2),
-    `USER matches: ${userMatches}`,
+    "conversation length is capped server-side",
+    contents.length === MAX_HISTORY_TURNS + 1,
+    `${contents.length}`,
   );
 
   // 5d. Upstream non-2xx.
@@ -952,16 +1009,21 @@ async function main(): Promise<void> {
     );
   }
 
-  const GEN = "/interactions";
+  const GEN = ":generateContent";
   const isList = (url: string) => url.includes("/models?");
-  const modelOf = (c: Captured) => {
-    return typeof c.body.model === "string" ? c.body.model.replace("models/", "") : "unknown";
-  };
+  const modelOf = (url: string) => url.replace(/^.*\/models\//, "").replace(/:.*$/, "");
 
   interface UpstreamScript {
     captured: Captured[];
     /** ListModels handler. Omit to make ListModels fail (blind mode). */
     list?: () => Response;
+    /**
+     * Interactions handler. `nth` counts calls to this endpoint, from 1, and
+     * `model` is the model named in the REQUEST BODY (this endpoint has one
+     * fixed URL). Omit to model a project that serves only the legacy path —
+     * see `interactionsUnavailable` for why that is the default.
+     */
+    interactions?: (model: string, nth: number) => Response;
     /** generateContent handler. `nth` counts calls to THIS model, from 1. */
     gen: (model: string, nth: number) => Response;
     /** Every backoff the handler asked for, in order. */
@@ -971,6 +1033,7 @@ async function main(): Promise<void> {
 
   function scriptedDeps(script: UpstreamScript): ChatDeps {
     const perModel = new Map<string, number>();
+    let interactionCalls = 0;
     return {
       getApiKey: () => FAKE_KEY,
       getBundle: () => bundle,
@@ -984,16 +1047,22 @@ async function main(): Promise<void> {
       ...(script.now ? { now: script.now } : {}),
       fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        const capturedItem = {
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        script.captured.push({
           url,
           headers: (init?.headers ?? {}) as Record<string, string>,
-          body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {},
-        };
-        script.captured.push(capturedItem);
+          body,
+        });
         if (isList(url)) {
           return script.list ? script.list() : upstreamError(500, "ListModels is having a day");
         }
-        const model = modelOf(capturedItem);
+        if (isInteractions(url)) {
+          interactionCalls += 1;
+          return script.interactions
+            ? script.interactions(String(body.model ?? ""), interactionCalls)
+            : interactionsUnavailable();
+        }
+        const model = modelOf(url);
         const nth = (perModel.get(model) ?? 0) + 1;
         perModel.set(model, nth);
         return script.gen(model, nth);
@@ -1002,7 +1071,7 @@ async function main(): Promise<void> {
   }
 
   const genUrls = (captured: Captured[]) =>
-    captured.filter((c) => c.url.includes(GEN)).map((c) => modelOf(c));
+    captured.filter((c) => c.url.includes(GEN)).map((c) => modelOf(c.url));
 
   /* 12a. ListModels succeeds and picks the right model.
    *
@@ -1525,6 +1594,563 @@ async function main(): Promise<void> {
       captured.length > 0 && captured.every((c) => c.headers["x-goog-api-key"] === FAKE_KEY),
       String(captured.length),
     );
+  }
+
+  /* ── 13. The transport layer: Interactions primary, generateContent fallback
+   *
+   * The failure this section exists for is the one AFTER the model chain was
+   * built. The deployment was live, the key reached the function, the bundle
+   * loaded — and every call came back HTTP 400, including `GET /v1beta/models`,
+   * which sends no request body at all. Nothing about a payload explains a 400
+   * on a bare GET. The key is one of the new-style AI Studio auth keys (`AQ.`
+   * prefix, now the default), and the working hypothesis is that those are
+   * accepted by the Interactions API and refused by the legacy `models/*`
+   * paths.
+   *
+   * NOTHING BELOW PROVES THAT HYPOTHESIS. There is still no test that calls
+   * Google, and a mock that "confirmed" one would be worthless. What these
+   * assertions prove is that the handler behaves correctly under EITHER
+   * outcome: Interactions first, the legacy endpoint as an automatic fallback,
+   * the winner cached, and a typed failure — never a throw — when both refuse.
+   * The one observation that would settle it is a single live question whose
+   * answer names its transport, which is exactly why the transport is now on
+   * the wire.
+   */
+
+  section("transport: Interactions primary, generateContent fallback");
+
+  const interactionUrls = (captured: Captured[]) =>
+    captured.filter((c) => isInteractions(c.url)).map((c) => c.url);
+
+  check(
+    "Interactions is the primary transport, generateContent the fallback",
+    TRANSPORT_PREFERENCE.join(",") === "interactions,generateContent",
+    TRANSPORT_PREFERENCE.join(","),
+  );
+
+  /* 13a. Interactions answers. The text must be lifted out of the STEPS array —
+   * the answer is inside the `model_output` step's content, not at the top
+   * level — and the model's own reasoning and tool traffic must not reach the
+   * reviewer. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What did the pipeline do about TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        interactions: () =>
+          interactionOk("Answer over the Interactions API.", [
+            { type: "thought", content: [{ type: "text", text: "internal reasoning" }] },
+            { type: "tool_call", content: [{ type: "text", text: "lookup(defect=TX-03)" }] },
+          ]),
+        gen: () => upstreamError(500, "the legacy endpoint should not have been called"),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+
+    check("Interactions: a live answer comes back", res.status === 200, String(res.status));
+    check(
+      "Interactions: the answer is extracted from the model_output step",
+      body.ok === true && body.answer === "Answer over the Interactions API.",
+      body.ok === true ? body.answer : JSON.stringify(body),
+    );
+    check(
+      "Interactions: model thoughts and tool steps are not shown to the reviewer",
+      body.ok === true &&
+        !body.answer.includes("internal reasoning") &&
+        !body.answer.includes("lookup("),
+      body.ok === true ? body.answer : "",
+    );
+    check(
+      "Interactions: the legacy endpoint is never called when the primary answers",
+      genUrls(captured).length === 0,
+      genUrls(captured).join(","),
+    );
+    check(
+      "Interactions: the transport is reported on the answer",
+      body.ok === true && body.transport === "interactions",
+      body.ok === true ? String(body.transport) : "",
+    );
+    check(
+      "Interactions: the resolution names the transport that answered",
+      body.ok === true && body.resolution?.transport === "interactions",
+      JSON.stringify(body.ok === true ? body.resolution?.transports : null),
+    );
+    check(
+      "Interactions: the first preference model is used (discovery does not gate this transport)",
+      body.ok === true && body.model === MODEL_PREFERENCE[0],
+      body.ok === true ? body.model : "",
+    );
+    check(
+      "Interactions: usage is mapped from the Interaction's own token fields",
+      body.ok === true && body.usage?.totalTokens === 3120 && body.usage?.responseTokens === 120,
+      JSON.stringify(body.ok === true ? body.usage : null),
+    );
+    check(
+      "Interactions: the numeric self-audit still runs on a live answer",
+      body.ok === true && body.audit?.source === "retrieved-context",
+      JSON.stringify(body.ok === true ? body.audit?.source : null),
+    );
+
+    /* The request body, field by field. This is the shape the whole change
+     * turns on, so it is asserted rather than assumed. */
+    const call = captured.find((c) => isInteractions(c.url)) as Captured;
+    check("Interactions: the endpoint is POST /v1beta/interactions", call.url === INTERACTIONS_URL, call.url);
+    check(
+      "Interactions: the model travels in the BODY, not the URL",
+      call.body.model === MODEL_PREFERENCE[0] && !call.url.includes(MODEL_PREFERENCE[0]),
+      `${String(call.body.model)} / ${call.url}`,
+    );
+    check(
+      "Interactions: the grounded prompt is sent as `input`",
+      typeof call.body.input === "string" &&
+        (call.body.input as string).includes("QUESTION: What did the pipeline do about TX-03?") &&
+        (call.body.input as string).includes("RUN FACTS"),
+      typeof call.body.input,
+    );
+    check(
+      "Interactions: the system instruction is re-sent (interaction-scoped, not sticky)",
+      typeof call.body.system_instruction === "string" &&
+        (call.body.system_instruction as string).includes("NEVER state a number"),
+      typeof call.body.system_instruction,
+    );
+    check(
+      "Interactions: max output tokens are capped in generation_config",
+      (call.body.generation_config as { max_output_tokens?: number })?.max_output_tokens === 1400,
+      JSON.stringify(call.body.generation_config),
+    );
+    /**
+     * `store` defaults to TRUE upstream: the service retains the interaction.
+     * This is a public demo on a personal quota, the payload is a reviewer's
+     * question plus a slice of the bundle, and nothing here ever reads an
+     * interaction back. Retention would be pure liability, so the field is sent
+     * explicitly — `=== false`, not merely falsy, because an omitted field
+     * would also read as falsy here and would mean the opposite upstream.
+     */
+    check("Interactions: `store: false` is sent explicitly", call.body.store === false, JSON.stringify(call.body.store));
+    check(
+      "Interactions: the key is in the header, never in the URL or the body",
+      call.headers["x-goog-api-key"] === FAKE_KEY &&
+        !call.url.includes(FAKE_KEY) &&
+        !call.url.includes("key=") &&
+        !JSON.stringify(call.body).includes(FAKE_KEY),
+      call.url,
+    );
+
+    // The winning transport is cached exactly as the winning model is.
+    const again: Captured[] = [];
+    await handleChatPost(
+      post({ question: "and TX-04?" }),
+      scriptedDeps({
+        captured: again,
+        sleeps: [],
+        interactions: () => interactionOk("second answer"),
+        gen: () => upstreamError(500, "still should not be called"),
+      }),
+    );
+    check(
+      "Interactions: the transport choice is cached across questions",
+      interactionUrls(again).length === 1 && genUrls(again).length === 0,
+      again.map((c) => c.url).join(" | "),
+    );
+
+    const status = (await handleChatStatus(makeDeps()).json()) as ChatStatusResponse;
+    check("GET reports the transport that answered", status.transport === "interactions", String(status.transport));
+    check(
+      "GET reports the transport order it would try next",
+      (status.transports ?? [])[0] === "interactions",
+      (status.transports ?? []).join(","),
+    );
+    check(
+      "GET carries a human transport note",
+      (status.transportNote ?? "").includes("Interactions"),
+      status.transportNote,
+    );
+    check(
+      "GET still never contains the key once a transport has resolved",
+      !(await handleChatStatus(makeDeps()).text()).includes(FAKE_KEY),
+    );
+  }
+
+  /* 13b. A 400 on Interactions falls through to generateContent.
+   *
+   * This is the branch that keeps an old `AIza` deployment working, and the
+   * branch that saves the deployment if the hypothesis is inverted. A fix that
+   * is only correct when a guess is correct is not a fix. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        interactions: () => upstreamError(400, "Invalid argument for this endpoint"),
+        gen: () => geminiOk("Answer over the legacy endpoint."),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+
+    check("a 400 on Interactions does not fail the request", res.status === 200, String(res.status));
+    check(
+      "the legacy transport answers instead",
+      body.ok === true && body.answer === "Answer over the legacy endpoint.",
+      JSON.stringify(body),
+    );
+    check(
+      "the answer says which transport actually produced it",
+      body.ok === true && body.transport === "generateContent",
+      body.ok === true ? String(body.transport) : "",
+    );
+    check(
+      "both transports are reported as having been queued",
+      (body.ok === true ? body.resolution?.transports ?? [] : []).join(",") ===
+        "interactions,generateContent",
+      JSON.stringify(body.ok === true ? body.resolution?.transports : null),
+    );
+    check(
+      "the transport note explains the fall-through rather than leaving it silent",
+      (body.ok === true ? body.resolution?.transportNote ?? "" : "").includes("400"),
+      body.ok === true ? body.resolution?.transportNote : "",
+    );
+    check(
+      "the attempt log records the endpoint rejection against its transport",
+      (body.ok === true ? body.resolution?.attempts ?? [] : []).some(
+        (a) => a.transport === "interactions" && a.status === 400,
+      ),
+      JSON.stringify(body.ok === true ? body.resolution?.attempts : null),
+    );
+    check(
+      "an endpoint rejection does NOT retire the model (it is not the model's fault)",
+      (body.ok === true ? body.resolution?.skipped ?? [] : []).length === 0,
+      JSON.stringify(body.ok === true ? body.resolution?.skipped : null),
+    );
+    check(
+      "exactly one call per transport was needed",
+      interactionUrls(captured).length === 1 && genUrls(captured).length === 1,
+      captured.map((c) => c.url).join(" | "),
+    );
+
+    // The losing transport is retired for the instance: the second question
+    // must not pay for the same discovery again.
+    const again: Captured[] = [];
+    await handleChatPost(
+      post({ question: "and TX-04?" }),
+      scriptedDeps({
+        captured: again,
+        sleeps: [],
+        interactions: () => upstreamError(400, "still broken"),
+        gen: () => geminiOk("second answer"),
+      }),
+    );
+    check(
+      "the failed transport is not retried on the next question",
+      interactionUrls(again).length === 0 && genUrls(again).length === 1,
+      again.map((c) => c.url).join(" | "),
+    );
+  }
+
+  /* 13c. A 200 that is not an Interaction at all is treated as a transport
+   * fault, not as an empty answer. Something is serving that URL; it is not
+   * this API. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        interactions: () => geminiOk("a generateContent-shaped body from the wrong endpoint"),
+        gen: () => geminiOk("Answer over the legacy endpoint."),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a 2xx in the wrong shape falls through instead of reporting an empty answer",
+      body.ok === true && body.transport === "generateContent",
+      JSON.stringify(body),
+    );
+  }
+
+  /* 13d. An Interaction that really is empty is an empty answer, not a
+   * transport fault. The distinction matters: falling through here would spend
+   * a second round-trip to reproduce the same silence. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        interactions: () =>
+          new Response(JSON.stringify({ object: "interaction", status: "completed", steps: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        gen: () => geminiOk("should not be reached"),
+      }),
+    );
+    check("an empty Interaction is typed empty_response", res.status === 502, String(res.status));
+    check(
+      "an empty Interaction does not spend a second transport",
+      genUrls(captured).length === 0,
+      genUrls(captured).join(","),
+    );
+  }
+
+  /* 13e. `status: "incomplete"` is the Interactions spelling of MAX_TOKENS. A
+   * partial answer must be labelled as partial, on either transport. */
+  __resetModelResolution();
+  {
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured: [],
+        sleeps: [],
+        interactions: () => interactionOk("A partial answer", [], { status: "incomplete" }),
+        gen: () => geminiOk("should not be reached"),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a truncated Interaction is labelled as truncated",
+      body.ok === true && body.answer.includes("[Answer truncated"),
+      body.ok === true ? body.answer : JSON.stringify(body),
+    );
+  }
+
+  /* 13f. THE INVERTED HYPOTHESIS. If it is Interactions that refuses this key
+   * type, the request must still be answered by the other endpoint — and the
+   * reviewer must not be told their key is invalid when it demonstrably works
+   * somewhere. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        interactions: () => upstreamError(400, "API key not valid. Please pass a valid API key."),
+        gen: () => geminiOk("Answer over the legacy endpoint."),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a key rejected by ONE transport is not reported as a bad key",
+      body.ok === true && body.transport === "generateContent",
+      JSON.stringify(body),
+    );
+    check(
+      "the refusal is still recorded against the transport that made it",
+      (body.ok === true ? body.resolution?.attempts ?? [] : []).some(
+        (a) => a.transport === "interactions" && a.outcome === "failed" && a.status === 400,
+      ),
+      JSON.stringify(body.ok === true ? body.resolution?.attempts : null),
+    );
+  }
+
+  /* 13g. Both transports refuse the key. NOW it is the key, and only now. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        interactions: () => upstreamError(400, "API key not valid. Please pass a valid API key."),
+        gen: () => upstreamError(400, "API key not valid. Please pass a valid API key."),
+      }),
+    );
+    const raw = await res.text();
+    const body = JSON.parse(raw) as ChatResponse;
+    check(
+      "a key refused by BOTH transports is typed upstream_auth",
+      !body.ok && body.kind === "upstream_auth",
+      raw,
+    );
+    check(
+      "the message says the endpoint has been ruled out, so the key is the remaining cause",
+      !body.ok && body.message.includes("rules out the endpoint"),
+      !body.ok ? body.message : "",
+    );
+    check(
+      "it still carries the console remedy",
+      !body.ok && (body.remedy ?? "").includes("aistudio.google.com/apikey"),
+      !body.ok ? String(body.remedy) : "",
+    );
+    check(
+      "a double key rejection never leaks the key, though both upstream bodies echoed it",
+      !raw.includes(FAKE_KEY),
+      raw,
+    );
+  }
+
+  /* 13h. Both transports fail for endpoint/model reasons — the client's
+   * scripted fallback must still fire, which server-side means a typed,
+   * non-throwing 502. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        interactions: () => upstreamError(400, "Invalid argument for this endpoint"),
+        gen: () => upstreamError(400, "Invalid JSON payload received"),
+      }),
+    );
+    const raw = await res.text();
+    const body = JSON.parse(raw) as ChatResponse;
+    check(
+      "when both transports fail the handler returns a typed failure, not a throw",
+      !body.ok && body.kind === "upstream_error",
+      raw,
+    );
+    check(
+      "the status is 502, so the client's scripted-fallback branch runs",
+      res.status === 502,
+      String(res.status),
+    );
+    check(
+      "both transports were actually tried before giving up",
+      interactionUrls(captured).length === 1 && genUrls(captured).length === 1,
+      captured.map((c) => c.url).join(" | "),
+    );
+    check(
+      "no request URL on either transport carries the key",
+      captured.every((c) => !c.url.includes(FAKE_KEY) && !c.url.includes("key=")),
+      captured.map((c) => c.url).join(" | "),
+    );
+    check(
+      "every request on either transport carries the key in the header instead",
+      captured.length > 0 && captured.every((c) => c.headers["x-goog-api-key"] === FAKE_KEY),
+      String(captured.length),
+    );
+    check(
+      "a total transport failure never leaks the key into the response",
+      !raw.includes(FAKE_KEY),
+      raw,
+    );
+  }
+
+  /* 13i. ListModels is NOT load-bearing. It is itself a legacy `models/*`
+   * endpoint and is expected to keep failing for an auth key — exactly as it
+   * did on the live deployment. Its 400 must not choose a transport, must not
+   * retire a candidate, and must not prevent an answer. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        list: () => upstreamError(400, "API key not valid. Please pass a valid API key."),
+        interactions: () => interactionOk("Answered despite ListModels being dead."),
+        gen: () => upstreamError(500, "should not be reached"),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a ListModels 400 still yields a live answer over the primary transport",
+      body.ok === true && body.transport === "interactions",
+      JSON.stringify(body),
+    );
+    check(
+      "a ListModels 400 does not retire any candidate",
+      (body.ok === true ? body.resolution?.skipped ?? [] : []).length === 0,
+      JSON.stringify(body.ok === true ? body.resolution?.skipped : null),
+    );
+    check(
+      "a ListModels 400 leaves the full preference list as the Interactions chain",
+      (body.ok === true ? body.resolution?.candidates ?? [] : []).join(",") ===
+        MODEL_PREFERENCE.join(","),
+      JSON.stringify(body.ok === true ? body.resolution?.candidates : null),
+    );
+    check(
+      "the ListModels 400 is still explained as a credential refusal, not a bad payload",
+      (body.ok === true ? body.resolution?.discoveryNote ?? "" : "").includes(
+        "ListModels sends no request body",
+      ),
+      body.ok === true ? body.resolution?.discoveryNote : "",
+    );
+    check(
+      "a ListModels 400 never leaks the key it echoed back",
+      !JSON.stringify(body).includes(FAKE_KEY),
+    );
+  }
+
+  /* 13j. A model name the Interactions endpoint rejects BY NAME is a model
+   * fallback, not a transport fallback — the endpoint is fine, the name is not. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps: [],
+        interactions: (model) =>
+          model === MODEL_PREFERENCE[0]
+            ? upstreamError(404, `Model ${model} is not available`)
+            : interactionOk("Answer from the second candidate on Interactions."),
+        gen: () => upstreamError(500, "should not be reached"),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a named-model rejection walks the candidate chain, not the transport chain",
+      body.ok === true && body.transport === "interactions" && body.model === MODEL_PREFERENCE[1],
+      JSON.stringify(body),
+    );
+    check(
+      "the skipped candidate is reported, and the transport is not blamed",
+      (body.ok === true ? body.resolution?.skipped ?? [] : []).join(",") === MODEL_PREFERENCE[0],
+      JSON.stringify(body.ok === true ? body.resolution?.skipped : null),
+    );
+    check(
+      "the legacy transport was never needed",
+      genUrls(captured).length === 0,
+      genUrls(captured).join(","),
+    );
+  }
+
+  /* 13k. A 429 on Interactions is a quota fault, not evidence about the
+   * endpoint: it is retried in place rather than triggering a transport switch
+   * that would produce the same 429 somewhere else. */
+  __resetModelResolution();
+  {
+    const captured: Captured[] = [];
+    const sleeps: number[] = [];
+    const res = await handleChatPost(
+      post({ question: "What is TX-03?" }),
+      scriptedDeps({
+        captured,
+        sleeps,
+        interactions: (_model, nth) =>
+          nth === 1 ? upstreamError(429, "Resource has been exhausted") : interactionOk("Answer after a retry."),
+        gen: () => upstreamError(500, "should not be reached"),
+      }),
+    );
+    const body = (await res.json()) as ChatResponse;
+    check(
+      "a 429 on the primary transport is retried in place",
+      body.ok === true && body.transport === "interactions" && interactionUrls(captured).length === 2,
+      `${JSON.stringify(body.ok === true ? body.transport : body)} / ${interactionUrls(captured).length}`,
+    );
+    check(
+      "a quota fault never switches transport",
+      genUrls(captured).length === 0,
+      genUrls(captured).join(","),
+    );
+    check("the retry backed off first", sleeps.length === 1 && sleeps[0] > 0, JSON.stringify(sleeps));
   }
 
   // Leave the module caches clean for anything that runs after this section.

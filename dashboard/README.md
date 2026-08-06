@@ -205,8 +205,63 @@ question still falls back to a scripted answer.
    enabled. You can tell at a glance whether the problem is the key or the code.
 
 `GET /api/chat` is the diagnosis surface for all of this. It reports `configured`,
-`bundleAvailable`, the resolved model, the full candidate list, the discovery state and any
-model already retired — and, as always, never the key.
+`bundleAvailable`, the resolved model, the full candidate list, the discovery state, the
+transport in use (below) and any model already retired — and, as always, never the key.
+
+### Which *endpoint* — the transport chain
+
+The model chain above was not enough. A live deployment reported:
+
+```
+{"configured":true,"bundleAvailable":true,"discovery":"unavailable",
+ "discoveryNote":"ListModels returned HTTP 400; the preference list was tried directly."}
+```
+
+Key present, bundle readable, and **both** upstream calls returning `400`:
+`POST /v1beta/models/{model}:generateContent` *and* `GET /v1beta/models`. ListModels sends
+no request body, so a malformed payload cannot explain it — a `400` on a bare `GET` is the
+credential being refused by that endpoint.
+
+The key on that deployment is one of the new-style AI Studio **auth keys** (`AQ.` prefix;
+Google now mints these by default, where the legacy format was `AIza…`). The working
+hypothesis is that auth keys are accepted by the **Interactions API** — GA since June 2026,
+`POST /v1beta/interactions`, where all new models launch — and refused by the legacy
+`models/*` REST paths, which the docs describe as "legacy but fully supported".
+
+So the endpoint is now a second dimension of the same fallback machinery:
+
+1. **Interactions is the primary transport.** The model travels in the request body, the
+   grounded prompt as `input`, the system instruction re-sent on every request (interaction
+   config is not sticky), and `store: false` — the field defaults to *true*, and a public
+   demo must not accumulate reviewers' questions in someone's project.
+2. **`generateContent` is an automatic fallback.** A `400`/`404` that implicates the
+   endpoint itself — not a content refusal, not a quota fault — falls through to the legacy
+   path and continues there. This is what keeps an existing `AIza` deployment working, and
+   what saves the deployment if the hypothesis is **inverted**. A fix that is only correct
+   when a guess is correct is not a fix.
+3. **The winning transport is cached per instance**, like the winning model.
+4. **A key rejection on one transport is not a bad key.** It only becomes `upstream_auth`
+   when *every* transport has refused it — otherwise the panel would tell a reviewer their
+   key is invalid while it was demonstrably working on the other endpoint.
+5. **ListModels is never load-bearing.** It is itself a legacy `models/*` endpoint and is
+   expected to keep failing for an auth key. It cannot choose a transport, cannot retire a
+   candidate, and does not filter the Interactions chain at all — it reports
+   `generateContent` support and has nothing to say about the newer endpoint.
+
+`GEMINI_TRANSPORT=interactions|generateContent` pins one from the deployment dashboard with
+no rebuild, the same way `GEMINI_MODEL` pins a model.
+
+**This hypothesis is unverified.** Nothing in the test suite proves it, and nothing could:
+there is no network in the build sandbox and a mock that "confirmed" it would be worthless.
+What the tests prove is that the handler is correct under *either* outcome. The single
+observation that settles it is one live question — the provenance line under the answer now
+names the endpoint that produced it, and `GET /api/chat` names the endpoint the instance
+settled on:
+
+* answer says `via the Interactions API`, attempt log shows `generateContent` refused → the
+  hypothesis holds;
+* answer says `via the legacy generateContent endpoint` → it is inverted;
+* `upstream_auth` with "rules out the endpoint" → both refused, and the key itself is bad.
 
 The panel opens on **the ten hardest questions about this pipeline**, ranked, taken from
 `INTERVIEW_QA.md` — four visible, six behind a disclosure, so a reviewer does not have to
@@ -353,7 +408,7 @@ accepting that trade-off is in `src/lib/rateLimit.ts`.
 npm test
 ```
 
-161 assertions covering the context selector (determinism, budget enforcement, that it
+297 assertions covering the context selector (determinism, budget enforcement, that it
 quotes live figures and that none of the three stale figures can reappear), the alias table
 (every ordinary phrasing lands on the right defect; all ten interview questions retrieve
 what their answers cite), the numeric verifier (rounding tolerance, sign, percent-versus-
@@ -361,23 +416,26 @@ ratio, every exemption rule, the derivation rule and its anti-laundering guard, 
 adversarial figure that must be flagged and nine legitimate answers that must not be), the
 scripted answers, and the route handler against a **mocked** upstream: success, upstream
 non-2xx, network failure, safety block, empty candidate, missing key, oversized body,
-malformed JSON, history cap and the rate limiter. Two of those assertions specifically
-check that a key never escapes — one feeds an upstream error body containing the key, one
-throws a network error containing it.
+malformed JSON, history cap and the rate limiter — plus the model chain (discovery,
+per-candidate fallback, bounded retry, the auth dead end) and the transport chain
+(Interactions answering from a multi-step response, a `400` falling through to
+`generateContent`, both failing so the scripted fallback fires, the transport cached across
+questions, `store: false` actually on the wire). Several assertions exist only to check
+that a key never escapes: two upstream error bodies that echo the key back, a network error
+that carries it, and a sweep asserting no request URL on either transport contains it.
 
-**One assertion fails on this bundle, deliberately.** `revenue_reconciliation` emits a
-single `reconciliation_delta` column, while this dashboard and `INTERVIEW_QA.md` both
-describe two independent controls, `line_level_delta` and `aggregate_delta`. The dashboard
-renders the two missing figures as "not in bundle" — never as `$0.00` — and quotes the one
-that exists under its real name. It could be made green in one line by reading
-`reconciliation_delta` into both fields, and that is exactly the line this project exists
-to argue against: it would report that two independent controls passed when one ran. The
-fix belongs in `src/analytics/queries.py`; the assertion stays red until it lands.
+**The two-delta assertion is green on this bundle.** It was previously red on purpose:
+`revenue_reconciliation` emitted a single `reconciliation_delta` where this dashboard and
+`INTERVIEW_QA.md` describe two independent controls, `line_level_delta` and
+`aggregate_delta`. It could have been made green in one line by reading one delta into both
+fields — reporting that two independent controls passed when one ran — and instead it was
+left red until the pipeline emitted both. Regenerating the bundle resolved it at source.
 
 **No test calls Gemini.** The build sandbox has no route to the API, and a test that faked
-a successful call would be exactly the dishonesty this project argues against. The one
-thing only a live deployment can confirm is that the real endpoint accepts this exact
-request shape.
+a successful call would be exactly the dishonesty this project argues against. Two things
+only a live deployment can confirm: that the real endpoints accept these exact request
+shapes, and which of the two accepts this key. Both are reported on the answer itself — see
+the transport section above.
 
 ---
 
