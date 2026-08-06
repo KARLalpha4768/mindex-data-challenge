@@ -70,6 +70,13 @@ export default function DefectDetail({
             label="Copy permalink"
             copiedLabel="Permalink copied"
           />
+          <a
+            href="#raw"
+            className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent/10 px-2 py-1 font-mono text-xs text-accent transition-colors hover:bg-accent/20"
+          >
+            <span>Step 1:</span>
+            <span>Inspect in Raw vs Clean CSV</span>
+          </a>
           {refPath && (
             <a
               href={githubBlobUrl(refPath)}
@@ -77,7 +84,7 @@ export default function DefectDetail({
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1.5 rounded border border-line bg-raised px-2 py-1 font-mono text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
             >
-              {defect.source_ref}
+              <span>GitHub: {defect.source_ref}</span>
               <span className="sr-only"> (opens on GitHub in a new tab)</span>
             </a>
           )}

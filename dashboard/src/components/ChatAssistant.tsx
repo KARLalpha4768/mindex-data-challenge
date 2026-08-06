@@ -1344,19 +1344,32 @@ export default function ChatAssistant({
                       {m.text}
                     </p>
                   ) : m.text.includes("---DEEPER_ANALYSIS---") ? (
-                    <div className="text-sm leading-relaxed">
-                      <div className="whitespace-pre-wrap">
-                        <LinkedText
-                          text={m.text.split("---DEEPER_ANALYSIS---")[0].trim()}
-                          knownCodes={knownCodes}
-                          onSelectDefect={onSelectDefect}
-                        />
+                    <div className="text-sm leading-relaxed space-y-3">
+                      <div className="rounded border border-accent/30 bg-panel/40 p-3.5">
+                        <div className="mb-2 flex items-center gap-1.5 text-2xs font-bold uppercase tracking-wider text-accent">
+                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-contrast text-3xs font-mono">
+                            ✓
+                          </span>
+                          <span>Executive Summary (Simple TL;DR)</span>
+                        </div>
+                        <div className="whitespace-pre-wrap text-sm text-ink">
+                          <LinkedText
+                            text={m.text.split("---DEEPER_ANALYSIS---")[0].trim()}
+                            knownCodes={knownCodes}
+                            onSelectDefect={onSelectDefect}
+                          />
+                        </div>
                       </div>
-                      <details className="mt-4 rounded-lg border border-line/60 bg-panel/30 p-4">
-                        <summary className="cursor-pointer font-semibold text-accent hover:underline">
-                          Read Deeper Analysis
+
+                      <details className="rounded-lg border border-line/80 bg-panel/60 p-3.5 transition-colors hover:border-accent/50" open>
+                        <summary className="cursor-pointer flex items-center justify-between font-semibold text-accent text-xs">
+                          <span className="flex items-center gap-1.5">
+                            <span className="font-mono text-2xs">▶</span>
+                            <span>Extended Deep Analysis & Technical Evidence</span>
+                          </span>
+                          <span className="text-2xs font-normal text-ink-faint">Detailed Breakdown</span>
                         </summary>
-                        <div className="mt-3 whitespace-pre-wrap">
+                        <div className="mt-3 border-t border-line/60 pt-3 whitespace-pre-wrap text-xs text-ink-dim leading-relaxed">
                           <LinkedText
                             text={m.text.split("---DEEPER_ANALYSIS---")[1].trim()}
                             knownCodes={knownCodes}
@@ -1442,14 +1455,15 @@ export default function ChatAssistant({
 
                   {(m.codeRef || canNavigate(m)) && (
                     <div className="flex items-center justify-between gap-2 border-t border-line/40 pt-2 font-mono text-2xs">
-                      <span className="text-ink-dim">{m.codeRef ?? ""}</span>
+                      <span className="text-ink-dim truncate">{m.codeRef ? `Source Ref: ${m.codeRef}` : ""}</span>
                       {canNavigate(m) && (
                         <button
                           type="button"
                           onClick={() => handleNavigateToCode(m)}
-                          className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 font-semibold text-accent transition-colors hover:bg-accent/20"
+                          className="shrink-0 flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2.5 py-1 font-semibold text-accent transition-colors hover:bg-accent/20"
                         >
-                          Open in Defect Explorer
+                          <span>Step 3:</span>
+                          <span>Defect Explorer & Linked Code →</span>
                         </button>
                       )}
                     </div>

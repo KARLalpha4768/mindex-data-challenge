@@ -905,6 +905,64 @@ export default function RawVsCleanInspector({
         </div>
       </div>
 
+      {/* Prominent Reviewer Guidance Banner */}
+      <div className="rounded-lg border border-accent/40 bg-gradient-to-r from-accent/10 via-panel to-panel p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-2 mb-3">
+          <div className="flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-2xs font-bold text-accent-contrast">
+              i
+            </span>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-ink">
+              Reviewer Inspection Guide — 3-Step Evaluation Loop
+            </h3>
+          </div>
+          <span className="text-2xs font-mono text-ink-faint">
+            Visual Diff · Grounded AI · Source Tracing
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3 text-xs">
+          {/* Step 1 */}
+          <div className="rounded border border-line/70 bg-panel/70 p-3 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-400 font-bold font-mono text-xs">
+                1
+              </span>
+              <span className="font-semibold text-ink">Click Red/Amber Cells on Left</span>
+            </div>
+            <p className="text-2xs text-ink-dim leading-relaxed">
+              Click any <span className="font-semibold text-red-400">red cell</span> (seeded defect) or <span className="font-semibold text-amber-300">amber cell</span> (preserved non-correction) in the Raw CSV.
+            </p>
+          </div>
+
+          {/* Step 2 */}
+          <div className="rounded border border-line/70 bg-panel/70 p-3 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/20 text-accent font-bold font-mono text-xs">
+                2
+              </span>
+              <span className="font-semibold text-ink">Ask Chatbot (Simple + Extended)</span>
+            </div>
+            <p className="text-2xs text-ink-dim leading-relaxed">
+              Open the AI Assistant. It reads server-side row diffs and gives an <span className="text-accent font-medium">Executive TL;DR</span> plus an <span className="text-accent font-medium">Extended Deep Analysis</span>.
+            </p>
+          </div>
+
+          {/* Step 3 */}
+          <div className="rounded border border-line/70 bg-panel/70 p-3 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-accent-contrast font-bold font-mono text-xs">
+                3
+              </span>
+              <span className="font-semibold text-ink">Defect Explorer & Linked Code</span>
+            </div>
+            <p className="text-2xs text-ink-dim leading-relaxed">
+              Jump directly to the defect dossier to inspect audit records, lineage stages, and <span className="text-ink font-medium">exact linked Python/SQL source lines</span>.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* ── The worked example ───────────────────────────────────────────────
           The cell → assistant link is the most interesting thing this view can
           do and the least discoverable: nothing on screen suggests that clicking
@@ -916,7 +974,7 @@ export default function RawVsCleanInspector({
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-accent/30 bg-accent/5 px-4 py-3">
           <div className="max-w-3xl space-y-1">
             <p className="text-xs font-medium uppercase tracking-wider text-ink-faint">
-              Start here
+              Try Worked Example
             </p>
             <p className="text-sm text-ink-dim">
               Source row {Number(exampleCell.row.uid) + 1},{" "}
@@ -935,14 +993,14 @@ export default function RawVsCleanInspector({
             onClick={showExample}
             className="shrink-0 rounded border border-accent bg-accent/15 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent/25"
           >
-            Select this cell and ask the assistant
+            Select this cell & test Step 2 / Step 3
           </button>
         </div>
       )}
 
       {/* Popover Detail Modal / Card when cell is clicked */}
       {activeCell && (
-        <div className="space-y-3 rounded-lg border border-accent/40 bg-raised p-4">
+        <div className="space-y-3 rounded-lg border border-accent/40 bg-raised p-4 shadow-md">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Badge tone={activeCell.info.status === "error" ? "bad" : "accent"}>
@@ -963,7 +1021,7 @@ export default function RawVsCleanInspector({
             <button
               type="button"
               onClick={() => setActiveCell(null)}
-              className="text-xs text-ink-dim hover:text-ink"
+              className="rounded border border-line bg-panel px-2 py-0.5 text-xs text-ink-dim hover:text-ink hover:border-ink-faint"
             >
               Close
             </button>
@@ -999,38 +1057,33 @@ export default function RawVsCleanInspector({
             {activeCell.info.explanation || "Standardized by cleaning rules."}
           </p>
 
-          {/* Discoverability. A reviewer has no way to guess that clicking a cell
-              also told the assistant about it, and an affordance nobody knows
-              exists is the same as one that does not. Only rendered when the
-              shell is actually listening (`onCellChange` present), so the card
-              never claims something that is not happening. */}
+          {/* Discoverability */}
           {onCellChange && (
             <p className="mt-2 rounded border border-accent/30 bg-accent/5 px-2.5 py-1.5 text-2xs text-ink-dim">
-              <span className="font-semibold text-accent">The assistant knows about this cell.</span>{" "}
-              Open it and ask <span className="italic">&ldquo;why is this cell flagged?&rdquo;</span> —
-              it is sent the coordinates ({activeCell.dataset}, row {activeCell.rowIndex + 1},{" "}
-              {activeCell.col}) and reads the whole row back off the pipeline&apos;s own diff file
-              on the server.
+              <span className="font-semibold text-accent">Grounded Context Connected:</span> Coordinates ({activeCell.dataset}, row {activeCell.rowIndex + 1},{" "}
+              {activeCell.col}) are active. Open the Assistant below to receive both a simple executive summary and extended deep technical analysis.
             </p>
           )}
 
-          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-line/50">
             {onOpenAssistant && (
               <button
                 type="button"
                 onClick={onOpenAssistant}
-                className="rounded border border-accent bg-accent/15 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent/25"
+                className="flex items-center gap-1.5 rounded border border-accent bg-accent/15 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent/25"
               >
-                Ask the assistant about this cell
+                <span>Step 2:</span>
+                <span>Ask Chatbot (Simple + Extended)</span>
               </button>
             )}
             {activeCell.info.defect_code && onSelectDefect && (
               <button
                 type="button"
                 onClick={() => onSelectDefect(activeCell.info.defect_code!)}
-                className="rounded bg-accent px-3 py-1.5 text-xs font-semibold text-accent-contrast hover:bg-accent/90"
+                className="flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-xs font-semibold text-accent-contrast hover:bg-accent/90"
               >
-                View {activeCell.info.defect_code} in Defect Explorer
+                <span>Step 3:</span>
+                <span>View {activeCell.info.defect_code} in Defect Explorer & Linked Code →</span>
               </button>
             )}
           </div>

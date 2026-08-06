@@ -172,6 +172,38 @@ export default function Overview({
             );
           })}
         </ol>
+
+        {/* Prominent 3-Step Reviewer Loop Box */}
+        <div className="mt-6 rounded-lg border border-accent/30 bg-accent/5 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-2xs font-bold text-accent-contrast">
+              ★
+            </span>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-ink">
+              Interactive 3-Step Reviewer Loop
+            </h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="rounded border border-line/60 bg-panel/80 p-2.5">
+              <span className="font-bold text-accent">1. Click Red Cells</span>
+              <p className="text-2xs text-ink-dim mt-1">
+                In <a href="#raw" onClick={(e) => { if (!e.metaKey && !e.ctrlKey && onSelectView) { e.preventDefault(); onSelectView("raw"); } }} className="text-accent underline">Raw vs Clean</a>, click any red/amber cell to spotlight the defect.
+              </p>
+            </div>
+            <div className="rounded border border-line/60 bg-panel/80 p-2.5">
+              <span className="font-bold text-accent">2. Ask AI Chatbot</span>
+              <p className="text-2xs text-ink-dim mt-1">
+                Open the Assistant for a concise <span className="text-ink font-medium">Executive Summary</span> and <span className="text-ink font-medium">Extended Deep Analysis</span>.
+              </p>
+            </div>
+            <div className="rounded border border-line/60 bg-panel/80 p-2.5">
+              <span className="font-bold text-accent">3. Defect Explorer & Code</span>
+              <p className="text-2xs text-ink-dim mt-1">
+                Drill into <a href="#defects" onClick={(e) => { if (!e.metaKey && !e.ctrlKey && onSelectView) { e.preventDefault(); onSelectView("defects"); } }} className="text-accent underline">Defect Explorer</a> to inspect audit records and exact Python/SQL code lines.
+              </p>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* ── Headline evidence strip ──────────────────────────────────────── */}
