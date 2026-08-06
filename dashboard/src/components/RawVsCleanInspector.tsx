@@ -48,32 +48,11 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
   const [flashingCell, setFlashingCell] = React.useState<{ row_id: string; col: string } | null>(null);
   const flashTimerRef = React.useRef<NodeJS.Timeout | null>(null);
   
-  const [sortCol, setSortCol] = React.useState<string | null>(null);
-  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
-
   const rawContainerRef = React.useRef<HTMLDivElement | null>(null);
   const cleanContainerRef = React.useRef<HTMLDivElement | null>(null);
   const rawRowRefs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
   const cleanRowRefs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
   const isSyncingScroll = React.useRef<boolean>(false);
-
-  const handleHeaderClick = (colName: string) => {
-    if (sortCol === colName) {
-      if (sortDir === "asc") {
-        setSortDir("desc");
-      } else {
-        setSortCol(null);
-        setSortDir("asc");
-      }
-    } else {
-      setSortCol(colName);
-      setSortDir("asc");
-    }
-  };
-
-  React.useEffect(() => {
-    setSortCol(null);
-  }, [dataset]);
 
   const syncScroll = (source: "raw" | "clean") => {
     if (isSyncingScroll.current) return;
@@ -101,15 +80,16 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
       setFlashingCell(null);
     }, 15000);
 
-    // Auto-scroll both raw and clean rows into view center
+    // Synchronize both raw and clean tables so target row aligns perfectly across the screen
     const rawRowEl = rawRowRefs.current[row_id];
-    const cleanRowEl = cleanRowRefs.current[row_id];
+    if (rawRowEl && rawContainerRef.current && cleanContainerRef.current) {
+      const containerHeight = rawContainerRef.current.clientHeight;
+      const rowTop = rawRowEl.offsetTop;
+      const rowHeight = rawRowEl.offsetHeight;
+      const targetScrollTop = Math.max(0, rowTop - containerHeight / 2 + rowHeight / 2);
 
-    if (rawRowEl) {
-      rawRowEl.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-    if (cleanRowEl) {
-      cleanRowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      rawContainerRef.current.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+      cleanContainerRef.current.scrollTo({ top: targetScrollTop, behavior: "smooth" });
     }
   };
 
@@ -135,44 +115,14 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
     );
   }
 
-  const { headers = [], rows = [] } = currentDataset;
+  const { headers, rows } = currentDataset;
 
-  const filteredRows = React.useMemo(() => {
-    return rows.filter((r) => {
-      if (!r) return false;
-      if (selectedCode === "all") return true;
-      return Array.isArray(r.defects) && r.defects.includes(selectedCode);
-    });
-  }, [rows, selectedCode]);
+  const filteredRows = rows.filter((r) => {
+    if (selectedCode === "all") return true;
+    return r.defects.includes(selectedCode);
+  });
 
-  const allCodes = React.useMemo(() => {
-    return Array.from(new Set(rows.flatMap((r) => r?.defects || []))).sort();
-  }, [rows]);
-
-  const sortedRows = React.useMemo(() => {
-    if (!sortCol) return filteredRows;
-    return [...filteredRows].sort((a, b) => {
-      if (!a || !b) return 0;
-      const cellA = a.cells?.[sortCol];
-      const cellB = b.cells?.[sortCol];
-      const valA = cellA?.clean_value ?? cellA?.raw_value ?? "";
-      const valB = cellB?.clean_value ?? cellB?.raw_value ?? "";
-
-      const numA = parseFloat(String(valA).replace(/[^0-9.-]+/g, ""));
-      const numB = parseFloat(String(valB).replace(/[^0-9.-]+/g, ""));
-      const isNumA = !isNaN(numA) && String(valA).trim() !== "";
-      const isNumB = !isNaN(numB) && String(valB).trim() !== "";
-
-      let cmp = 0;
-      if (isNumA && isNumB) {
-        cmp = numA - numB;
-      } else {
-        cmp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: "base" });
-      }
-
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-  }, [filteredRows, sortCol, sortDir]);
+  const allCodes = Array.from(new Set(rows.flatMap((r) => r.defects))).sort();
 
   return (
     <div className="space-y-6">
@@ -304,7 +254,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-semibold text-red-400">
               <span>Original Raw CSV ({dataset}.csv)</span>
-              <span>Red cells = Seeded Defects {sortCol && <span className="ml-2 text-accent">(Sorted by {sortCol} {sortDir === "asc" ? "▲" : "▼"})</span>}</span>
+              <span>Red cells = Seeded Defects</span>
             </div>
             <div
               ref={rawContainerRef}
@@ -314,40 +264,14 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
               <table className="w-full text-left text-xs">
                 <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono z-20">
                   <tr>
-                    <th
-                      onClick={() => setSortCol(null)}
-                      className="p-2 border-r border-line/50 whitespace-nowrap cursor-pointer hover:bg-raised/80 select-none"
-                      title="Click to reset row sorting"
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span>#</span>
-                        {sortCol && <span className="text-2xs text-accent">↺</span>}
-                      </div>
-                    </th>
-                    {headers.map((h) => {
-                      const isSorted = sortCol === h;
-                      return (
-                        <th
-                          key={h}
-                          onClick={() => handleHeaderClick(h)}
-                          className={`p-2 border-r border-line/50 font-semibold whitespace-nowrap cursor-pointer hover:bg-raised/80 select-none transition-colors ${
-                            isSorted ? "bg-accent/15 text-accent" : "hover:text-ink"
-                          }`}
-                          title={`Click to sort by ${h}`}
-                        >
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span>{h}</span>
-                            <span className={`text-2xs font-bold ${isSorted ? "text-accent" : "text-ink-faint opacity-60"}`}>
-                              {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
-                            </span>
-                          </div>
-                        </th>
-                      );
-                    })}
+                    <th className="p-2 border-r border-line/50 whitespace-nowrap">#</th>
+                    {headers.map((h) => (
+                      <th key={h} className="p-2 border-r border-line/50 font-semibold whitespace-nowrap">{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/40 font-mono">
-                  {sortedRows.map((r, i) => (
+                  {filteredRows.map((r, i) => (
                     <tr
                       key={r.row_id}
                       ref={(el) => {
@@ -396,7 +320,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-semibold text-green-400">
               <span>Cleaned Pipeline Output ({dataset}_clean.csv)</span>
-              <span>Green cells = Transformed / Imputed {sortCol && <span className="ml-2 text-accent">(Sorted by {sortCol} {sortDir === "asc" ? "▲" : "▼"})</span>}</span>
+              <span>Green cells = Transformed / Imputed</span>
             </div>
             <div
               ref={cleanContainerRef}
@@ -406,40 +330,14 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
               <table className="w-full text-left text-xs">
                 <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono z-20">
                   <tr>
-                    <th
-                      onClick={() => setSortCol(null)}
-                      className="p-2 border-r border-line/50 whitespace-nowrap cursor-pointer hover:bg-raised/80 select-none"
-                      title="Click to reset row sorting"
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span>#</span>
-                        {sortCol && <span className="text-2xs text-accent">↺</span>}
-                      </div>
-                    </th>
-                    {headers.map((h) => {
-                      const isSorted = sortCol === h;
-                      return (
-                        <th
-                          key={h}
-                          onClick={() => handleHeaderClick(h)}
-                          className={`p-2 border-r border-line/50 font-semibold whitespace-nowrap cursor-pointer hover:bg-raised/80 select-none transition-colors ${
-                            isSorted ? "bg-accent/15 text-accent" : "hover:text-ink"
-                          }`}
-                          title={`Click to sort by ${h}`}
-                        >
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span>{h}</span>
-                            <span className={`text-2xs font-bold ${isSorted ? "text-accent" : "text-ink-faint opacity-60"}`}>
-                              {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
-                            </span>
-                          </div>
-                        </th>
-                      );
-                    })}
+                    <th className="p-2 border-r border-line/50 whitespace-nowrap">#</th>
+                    {headers.map((h) => (
+                      <th key={h} className="p-2 border-r border-line/50 font-semibold whitespace-nowrap">{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/40 font-mono">
-                  {sortedRows.map((r, i) => (
+                  {filteredRows.map((r, i) => (
                     <tr
                       key={r.row_id}
                       ref={(el) => {
