@@ -150,20 +150,17 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
       if (!a?.cells || !b?.cells) return 0;
       const cellA = a.cells[sortCol];
       const cellB = b.cells[sortCol];
-      const valA = cellA?.clean_value ?? cellA?.raw_value ?? "";
-      const valB = cellB?.clean_value ?? cellB?.raw_value ?? "";
+      const valA = cellA?.clean_value || cellA?.raw_value || "";
+      const valB = cellB?.clean_value || cellB?.raw_value || "";
 
       const strA = String(valA).trim();
       const strB = String(valB).trim();
 
-      const cleanNumA = strA.replace(/[$,]/g, "");
-      const cleanNumB = strB.replace(/[$,]/g, "");
+      const numA = parseFloat(strA.replace(/[^0-9.-]/g, ""));
+      const numB = parseFloat(strB.replace(/[^0-9.-]/g, ""));
 
-      const numA = Number(cleanNumA);
-      const numB = Number(cleanNumB);
-
-      const isNumA = strA !== "" && !isNaN(numA);
-      const isNumB = strB !== "" && !isNaN(numB);
+      const isNumA = !isNaN(numA) && /[0-9]/.test(strA);
+      const isNumB = !isNaN(numB) && /[0-9]/.test(strB);
 
       let cmp = 0;
       if (isNumA && isNumB) {
