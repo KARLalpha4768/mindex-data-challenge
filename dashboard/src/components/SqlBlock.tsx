@@ -5,19 +5,6 @@ import React from "react";
 
 import { CopyButton } from "@/components/ui";
 
-/**
- * Collapsible, syntax-highlighted SQL block.
- *
- * Built on `<details>/<summary>` rather than a state-driven div: the disclosure
- * is keyboard-operable, screen-reader-announced and Ctrl-F searchable for free,
- * and it degrades correctly if JavaScript never runs. Same highlighter as the
- * Python code viewer — see the justification comment in CodeViewer.tsx.
- *
- * Comments are again given near-body contrast: each query carries its
- * numerator/denominator reasoning in `--` comments, and that is the part worth
- * reading.
- */
-
 const sqlTheme: PrismTheme = {
   plain: { color: "#c9d1d9", backgroundColor: "transparent" },
   styles: [
@@ -31,6 +18,51 @@ const sqlTheme: PrismTheme = {
   ],
 };
 
+function parseSqlClauses(sql: string) {
+  const lines = sql.split("\n");
+  let currentClause = "SELECT";
+  const clauses: Record<string, string[]> = {
+    SELECT: [],
+    FROM: [],
+    JOIN: [],
+    WHERE: [],
+    GROUP_BY: [],
+    ORDER_BY: [],
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("--")) continue;
+
+    const upper = trimmed.toUpperCase();
+    if (upper.startsWith("SELECT")) {
+      currentClause = "SELECT";
+      clauses.SELECT.push(trimmed.replace(/^SELECT\s+/i, ""));
+    } else if (upper.startsWith("FROM")) {
+      currentClause = "FROM";
+      clauses.FROM.push(trimmed.replace(/^FROM\s+/i, ""));
+    } else if (upper.includes("JOIN")) {
+      currentClause = "JOIN";
+      clauses.JOIN.push(trimmed);
+    } else if (upper.startsWith("WHERE") || upper.startsWith("AND ") || upper.startsWith("OR ")) {
+      currentClause = "WHERE";
+      clauses.WHERE.push(trimmed);
+    } else if (upper.startsWith("GROUP BY")) {
+      currentClause = "GROUP_BY";
+      clauses.GROUP_BY.push(trimmed.replace(/^GROUP BY\s+/i, ""));
+    } else if (upper.startsWith("ORDER BY")) {
+      currentClause = "ORDER_BY";
+      clauses.ORDER_BY.push(trimmed.replace(/^ORDER BY\s+/i, ""));
+    } else {
+      if (clauses[currentClause]) {
+        clauses[currentClause].push(trimmed);
+      }
+    }
+  }
+
+  return clauses;
+}
+
 export default function SqlBlock({
   sql,
   sqlRef,
@@ -41,6 +73,8 @@ export default function SqlBlock({
   sqlRef?: string;
   defaultOpen?: boolean;
 }) {
+  const [showDeconstructed, setShowDeconstructed] = React.useState(false);
+
   if (!sql?.trim()) {
     return (
       <p className="rounded border border-dashed border-line px-3 py-2 text-xs text-ink-faint">
@@ -49,54 +83,136 @@ export default function SqlBlock({
     );
   }
 
-  return (
-    <details open={defaultOpen} className="group rounded-md border border-line bg-[#0b0d11]">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md px-3 py-2 text-xs text-ink-dim transition-colors hover:text-ink">
-        <span className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className="inline-block transition-transform group-open:rotate-90"
-          >
-            ▸
-          </span>
-          <span>SQL</span>
-          {sqlRef && <code className="font-mono text-2xs text-ink-faint">{sqlRef}</code>}
-        </span>
-        <span className="font-mono text-2xs text-ink-faint">
-          {sql.split("\n").length} lines
-        </span>
-      </summary>
+  const clauses = parseSqlClauses(sql.trim());
 
-      <div className="border-t border-line">
-        <div className="flex justify-end px-3 py-2">
-          <CopyButton text={sql} label="Copy SQL" copiedLabel="Copied" />
+  return (
+    <div className="space-y-2">
+      <details open={defaultOpen} className="group rounded-md border border-line bg-[#0b0d11]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md px-3 py-2 text-xs text-ink-dim transition-colors hover:text-ink">
+          <span className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="inline-block transition-transform group-open:rotate-90"
+            >
+              ▸
+            </span>
+            <span className="font-semibold text-accent">SQL Query Engine</span>
+            {sqlRef && <code className="font-mono text-2xs text-ink-faint">{sqlRef}</code>}
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                setShowDeconstructed((prev) => !prev);
+              }}
+              className="rounded bg-accent/20 border border-accent/40 px-2 py-0.5 font-mono text-3xs font-semibold text-accent hover:bg-accent/30 transition-colors"
+            >
+              {showDeconstructed ? "Hide Deconstructed Clause Map" : "⚡ Deconstruct SQL Clause-by-Clause"}
+            </button>
+            <span className="font-mono text-2xs text-ink-faint">
+              {sql.split("\n").length} lines
+            </span>
+          </div>
+        </summary>
+
+        <div className="border-t border-line">
+          <div className="flex justify-end px-3 py-2">
+            <CopyButton text={sql} label="Copy SQL" copiedLabel="Copied" />
+          </div>
+          <div
+            tabIndex={0}
+            role="region"
+            aria-label={sqlRef ? `SQL for ${sqlRef}` : "SQL"}
+            className="max-h-96 overflow-auto px-3 pb-3"
+          >
+            <Highlight theme={sqlTheme} code={sql.trim()} language="sql">
+              {({ className, style, tokens, getLineProps, getTokenProps }) => (
+                <pre
+                  className={`${className} text-[0.78rem] leading-[1.55]`}
+                  style={{ ...style, background: "transparent" }}
+                >
+                  <code>
+                    {tokens.map((line, i) => (
+                      <div key={i} {...getLineProps({ line })}>
+                        {line.map((token, key) => (
+                          <span key={key} {...getTokenProps({ token })} />
+                        ))}
+                      </div>
+                    ))}
+                  </code>
+                </pre>
+              )}
+            </Highlight>
+          </div>
         </div>
-        <div
-          tabIndex={0}
-          role="region"
-          aria-label={sqlRef ? `SQL for ${sqlRef}` : "SQL"}
-          className="max-h-96 overflow-auto px-3 pb-3"
-        >
-          <Highlight theme={sqlTheme} code={sql.trim()} language="sql">
-            {({ className, style, tokens, getLineProps, getTokenProps }) => (
-              <pre
-                className={`${className} text-[0.78rem] leading-[1.55]`}
-                style={{ ...style, background: "transparent" }}
-              >
-                <code>
-                  {tokens.map((line, i) => (
-                    <div key={i} {...getLineProps({ line })}>
-                      {line.map((token, key) => (
-                        <span key={key} {...getTokenProps({ token })} />
-                      ))}
-                    </div>
+      </details>
+
+      {/* Interactive SQL Deconstructor Card */}
+      {showDeconstructed && (
+        <div className="rounded-md border border-accent/40 bg-raised p-4 space-y-3 font-mono text-xs">
+          <div className="flex items-center justify-between border-b border-line pb-2">
+            <span className="font-bold text-accent flex items-center gap-1.5">
+              <span>⚡</span> Interactive SQL Clause Breakdown
+            </span>
+            <span className="text-2xs text-ink-faint">Star Schema SQLite Engine</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-2xs">
+            {/* SELECT Clause */}
+            <div className="rounded border border-blue-500/30 bg-blue-500/10 p-2.5 space-y-1">
+              <span className="font-bold text-blue-400 block">🎯 SELECT (Calculated Business Metrics):</span>
+              <ul className="list-disc list-inside text-ink space-y-0.5">
+                {clauses.SELECT.map((c, i) => (
+                  <li key={i} className="truncate">{c}</li>
+                ))}
+              </ul>
+            </div>
+
+            {/* JOIN Clause */}
+            <div className="rounded border border-purple-500/30 bg-purple-500/10 p-2.5 space-y-1">
+              <span className="font-bold text-purple-400 block">🔗 JOIN (Star Schema Links):</span>
+              {clauses.JOIN.length > 0 ? (
+                <ul className="list-disc list-inside text-ink space-y-0.5">
+                  {clauses.JOIN.map((c, i) => (
+                    <li key={i} className="truncate">{c}</li>
                   ))}
-                </code>
-              </pre>
-            )}
-          </Highlight>
+                </ul>
+              ) : (
+                <span className="text-ink-faint font-sans italic">Direct table query (fact_sales)</span>
+              )}
+            </div>
+
+            {/* WHERE Clause */}
+            <div className="rounded border border-green-500/30 bg-green-500/10 p-2.5 space-y-1">
+              <span className="font-bold text-green-400 block">🛡️ WHERE (Data Quality Guards):</span>
+              {clauses.WHERE.length > 0 ? (
+                <ul className="list-disc list-inside text-ink space-y-0.5">
+                  {clauses.WHERE.map((c, i) => (
+                    <li key={i} className="truncate">{c}</li>
+                  ))}
+                </ul>
+              ) : (
+                <span className="text-ink-faint font-sans italic">All valid fact rows included</span>
+              )}
+            </div>
+
+            {/* GROUP BY Clause */}
+            <div className="rounded border border-amber-500/30 bg-amber-500/10 p-2.5 space-y-1">
+              <span className="font-bold text-amber-400 block">📊 GROUP BY (Business Grain):</span>
+              {clauses.GROUP_BY.length > 0 ? (
+                <ul className="list-disc list-inside text-ink space-y-0.5">
+                  {clauses.GROUP_BY.map((c, i) => (
+                    <li key={i} className="truncate">{c}</li>
+                  ))}
+                </ul>
+              ) : (
+                <span className="text-ink-faint font-sans italic">Overall aggregation level</span>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
-    </details>
+      )}
+    </div>
   );
 }

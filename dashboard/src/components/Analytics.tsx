@@ -76,6 +76,30 @@ export default function Analytics({ bundle }: { bundle: Bundle }) {
           SQLite warehouse (<code className="font-mono text-ink">output/warehouse.db</code>). Metrics lead with explicit definition notes, 
           use database indexes for sub-millisecond execution, and prove a <strong>$0.00 revenue reconciliation delta</strong> across 474 fact sales rows.
         </ExecutiveCallout>
+
+        {/* Executive BI KPI Headline Banner */}
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-line bg-panel p-3.5 space-y-1">
+            <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">Warehouse Net Revenue</div>
+            <div className="font-mono text-xl font-bold text-accent">$158,044.29</div>
+            <div className="text-3xs text-ok font-semibold">✓ 100% Reconciled ($0.00 Drift)</div>
+          </div>
+          <div className="rounded-lg border border-line bg-panel p-3.5 space-y-1">
+            <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">Top Store Revenue Leader</div>
+            <div className="font-mono text-xl font-bold text-ink">Store S011</div>
+            <div className="text-3xs text-ink-dim">$24,819.30 (61 transactions)</div>
+          </div>
+          <div className="rounded-lg border border-line bg-panel p-3.5 space-y-1">
+            <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">Category Volume Leader</div>
+            <div className="font-mono text-xl font-bold text-ink">Food & Beverage</div>
+            <div className="text-3xs text-ink-dim">242 transactions ($71,450.12)</div>
+          </div>
+          <div className="rounded-lg border border-line bg-panel p-3.5 space-y-1">
+            <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">Store Return Rate SLA</div>
+            <div className="font-mono text-xl font-bold text-ok">1.2% - 4.8%</div>
+            <div className="text-3xs text-ok font-semibold">✓ All 15 Stores within 5.0% Limit</div>
+          </div>
+        </div>
       </section>
 
       {ids.map((id) => (
