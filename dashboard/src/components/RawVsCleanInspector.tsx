@@ -83,6 +83,10 @@ interface Props {
    * make grounding depend on markup.
    */
   onCellChange?: (selection: InspectorSelection | null) => void;
+  /**
+   * Request that the shell open the grounded assistant panel.
+   */
+  onOpenAssistant?: () => void;
 }
 
 /* ── Sorting ────────────────────────────────────────────────────────────────
@@ -231,6 +235,7 @@ export default function RawVsCleanInspector({
   onSelectDefect,
   onDatasetChange,
   onCellChange,
+  onOpenAssistant,
 }: Props) {
   const [data, setData] = React.useState<CsvDiffData | null>(null);
   const [dataset, setDataset] = React.useState<"transactions" | "products" | "stores">("transactions");
@@ -571,8 +576,18 @@ export default function RawVsCleanInspector({
             </p>
           )}
 
-          {activeCell.info.defect_code && onSelectDefect && (
-            <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+            {onOpenAssistant && (
+              <button
+                type="button"
+                onClick={onOpenAssistant}
+                className="flex items-center gap-1.5 rounded border border-accent bg-accent/15 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent/25"
+              >
+                <span>💬</span>
+                <span>Ask AI Assistant About This Cell →</span>
+              </button>
+            )}
+            {activeCell.info.defect_code && onSelectDefect && (
               <button
                 type="button"
                 onClick={() => onSelectDefect(activeCell.info.defect_code!)}
@@ -580,8 +595,8 @@ export default function RawVsCleanInspector({
               >
                 View {activeCell.info.defect_code} in Defect Explorer →
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 

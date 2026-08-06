@@ -94,17 +94,17 @@ export default function InterviewerGuideModal({ isOpen, onClose }: Props) {
                 <span>⚡</span> 4. Raw vs Clean Visual Diffing
               </div>
               <p className="text-ink-dim leading-relaxed">
-                Interactive side-by-side grid comparing raw CSVs (red errors) against cleaned outputs (green fixes) with <strong>15-second green flashing cell pulses</strong> and smooth auto-scrolling.
+                Interactive side-by-side grid comparing raw CSVs (red errors) against cleaned outputs (green fixes) with <strong>15-second green flashing cell pulses</strong>, sortable headers, and 1-click cell detail cards with direct AI root-cause analysis.
               </p>
             </div>
 
             {/* 5. AI Copilot */}
             <div className="rounded-lg border border-line bg-raised p-3.5 space-y-1.5">
               <div className="font-bold text-amber-400 flex items-center gap-1.5">
-                <span>🤖</span> 5. Grounded AI Copilot
+                <span>🤖</span> 5. Cell-Aware Grounded AI Copilot
               </div>
               <p className="text-ink-dim leading-relaxed">
-                Embedded assistant powered by Google Gemini 2.5 Flash with full RAG context of the pipeline rules, able to answer architecture questions live in the browser.
+                Embedded assistant powered by Google Gemini with full RAG context. Click any red cell and ask <em>&ldquo;why is this cell red?&rdquo;</em> for server-resolved, zero-hallucination row explanations with exact code references.
               </p>
             </div>
 

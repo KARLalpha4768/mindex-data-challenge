@@ -419,6 +419,8 @@ interface Props {
   defects: DefectView[];
   onSelectDefect?: (code: string) => void;
   forceOpen?: boolean;
+  isOpen?: boolean;
+  onToggleOpen?: (open: boolean) => void;
   /**
    * What the reviewer is looking at, owned by `Dashboard.tsx` and passed down.
    *
@@ -462,10 +464,21 @@ export default function ChatAssistant({
   defects,
   onSelectDefect,
   forceOpen = false,
+  isOpen: propsIsOpen,
+  onToggleOpen,
   viewContext,
   selectionCodes = NO_SELECTION_CODES,
 }: Props) {
-  const [isOpen, setIsOpen] = React.useState(forceOpen);
+  const [internalOpen, setInternalOpen] = React.useState(forceOpen);
+  const isOpen = forceOpen || (propsIsOpen !== undefined ? propsIsOpen : internalOpen);
+  const setIsOpen = React.useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      const resolved = typeof next === "function" ? next(isOpen) : next;
+      setInternalOpen(resolved);
+      onToggleOpen?.(resolved);
+    },
+    [isOpen, onToggleOpen],
+  );
   const [inputQuery, setInputQuery] = React.useState("");
   const [mode, setMode] = React.useState<Mode>("checking");
   const [modelName, setModelName] = React.useState<string>("");

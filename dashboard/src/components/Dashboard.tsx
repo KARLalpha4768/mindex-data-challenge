@@ -164,6 +164,11 @@ export default function Dashboard({
    * not re-fire on every render of this shell.
    */
   const [rawCellSelection, setRawCellSelection] = React.useState<InspectorSelection | null>(null);
+  const [isAssistantOpen, setIsAssistantOpen] = React.useState(false);
+
+  const openAssistantForCell = React.useCallback(() => {
+    setIsAssistantOpen(true);
+  }, []);
 
   React.useEffect(() => {
     const sync = () => setRoute(parseHash(window.location.hash));
@@ -387,6 +392,7 @@ export default function Dashboard({
             onSelectDefect={goToDefect}
             onDatasetChange={setRawDataset}
             onCellChange={setRawCellSelection}
+            onOpenAssistant={openAssistantForCell}
           />
         )}
 
@@ -411,6 +417,8 @@ export default function Dashboard({
           onSelectDefect={goToDefect}
           viewContext={viewContext}
           selectionCodes={selectionCodes}
+          isOpen={isAssistantOpen}
+          onToggleOpen={setIsAssistantOpen}
         />
       )}
 
