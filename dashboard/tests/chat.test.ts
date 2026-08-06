@@ -413,10 +413,17 @@ async function main(): Promise<void> {
    *
    * Two answers carry `defectCode === "TX-03"`: the one generated from the
    * defect catalog (label "TX-03 …") and the hand-written trade-off card
-   * ("⚡ TX-03 Discount Preservation"), which sorts first and whose snippet is
-   * an illustrative three lines rather than a slice of the repository. The
-   * assertion below is about the generated answer quoting real source, so it
-   * now names which of the two it means instead of taking whichever came first.
+   * ("Trade-off — TX-03 Discount Preservation"), which sorts first and whose
+   * snippet is an illustrative three lines rather than a slice of the
+   * repository. The assertion below is about the generated answer quoting real
+   * source, so it names which of the two it means instead of taking whichever
+   * came first.
+   *
+   * The trade-off cards were once prefixed with a "⚡" and this selector relied
+   * on that glyph to tell the two apart. Removing the emoji for tone therefore
+   * broke this test — a decoration turned out to be load-bearing. The prefix is
+   * now the word "Trade-off", which distinguishes them for a reader as well as
+   * for `startsWith`.
    */
   const tx03 = answers.find((a) => a.defectCode === "TX-03" && a.label.startsWith("TX-03"));
   check("TX-03 has a scripted answer", Boolean(tx03));

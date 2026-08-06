@@ -1325,7 +1325,6 @@ export default function ChatAssistant({
                   {/* Context Scope Badge */}
                   {m.source !== "user" && (
                     <div className="flex items-center gap-1.5 rounded bg-panel/80 px-2.5 py-1 text-2xs text-ink-dim border border-line/50 font-mono">
-                      <span>📎</span>
                       <span className="font-semibold text-accent">Grounded on:</span>
                       <span>pipeline bundle.json ({m.audit ? `${m.audit.checked} figures verified` : "audited facts"})</span>
                     </div>

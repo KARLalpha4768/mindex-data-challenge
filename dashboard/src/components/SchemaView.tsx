@@ -38,8 +38,8 @@ export default function SchemaView({
       {/* ── Visual ERD Diagram ─────────────────────────────────────────── */}
       <div className="rounded-lg border border-line bg-panel p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-ink flex items-center gap-2">
-            <span>🗺️</span> Visual Star Schema ERD (Entity-Relationship Diagram)
+          <h3 className="text-sm font-bold text-ink">
+            Star schema — entity relationships
           </h3>
           <Badge tone="accent">1 Fact : 4 Dimensions</Badge>
         </div>
@@ -51,7 +51,10 @@ export default function SchemaView({
             <div className="text-3xs text-ink-faint mt-1">15 surviving stores</div>
           </div>
           
-          <div className="hidden md:block font-bold text-accent">FK ➔</div>
+          {/* A typographic arrow, not an emoji: this one carries meaning (the
+              direction of the foreign key) and must render identically on every
+              platform. Emoji fall back to wildly different glyphs; U+2192 does not. */}
+          <div className="hidden md:block font-bold text-accent">FK →</div>
 
           <div className="rounded-lg border-2 border-accent bg-accent/15 p-4 shadow-md">
             <div className="font-bold text-accent text-sm">fact_sales</div>

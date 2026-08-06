@@ -296,7 +296,7 @@ function tradeoffAnswers(bundle: Bundle, facts: RunFacts): ScriptedAnswer[] {
   const r = facts.recon;
   return [
     {
-      label: "⚡ TX-03 Discount Preservation",
+      label: "Trade-off — TX-03 Discount Preservation",
       defectCode: "TX-03",
       question: "Why preserve reported total_amount for TX-03 rather than recomputing quantity × list_price?",
       answer: `TX-03 (Silent Discount) handling:\n- 20 transaction rows carry total_amount lower than quantity × unit_price by 5% to 20%.\n- Decision: PRESERVE total_amount verbatim (${formatCurrency(r.netRevenue)} net revenue).\n- Recomputing total_amount would have overstated revenue by ${formatCurrency(r.discountTotal)} and erased the silent discount finding entirely.\n- Reconciliation: Gross list value (${formatCurrency(r.grossListValue)}) - Discount total (${formatCurrency(r.discountTotal)}) = Gross net of discount (${formatCurrency(r.grossSalesNetOfDiscount)}). Plus returns (${formatCurrency(r.returnsValue)}) = Net revenue (${formatCurrency(r.netRevenue)}) with $0.00 tie-out delta.`,
@@ -313,7 +313,7 @@ function tradeoffAnswers(bundle: Bundle, facts: RunFacts): ScriptedAnswer[] {
       keywords: ["tx-03", "discount", "preservation", "reconcile", "total_amount", "extended_amount"]
     },
     {
-      label: "⚡ PR-02 Catalog vs Fact Price",
+      label: "Trade-off — PR-02 Catalog vs Fact Price",
       defectCode: "PR-02",
       question: "Why does dim_product store $150.11 while fact_sales carries $141.61 for product P005?",
       answer: "PR-02 (Catalog Price Conflict) handling:\n- P005 appears twice in products.csv with list prices of $141.61 and $150.11 (an $8.50 price increase).\n- Decision: dim_product stores $150.11 as the current list price via an explicit MAX rule.\n- fact_sales stores $141.61 on all 19 transacted P005 sales lines because revenue comes from point-of-sale transactions.csv.\n- Rationale: Master catalog price changes post-date the sales window; fact revenue must reflect historical transacted price, not catalog list price.",
@@ -330,7 +330,7 @@ function tradeoffAnswers(bundle: Bundle, facts: RunFacts): ScriptedAnswer[] {
       keywords: ["pr-02", "price", "catalog", "fact_sales", "p005", "max", "survivorship"]
     },
     {
-      label: "⚡ ST-02 Store Survivorship Rule",
+      label: "Trade-off — ST-02 Store Survivorship Rule",
       defectCode: "ST-02",
       question: "How does the store survivorship rule for S007 avoid non-reproducible keep='first' behavior?",
       answer: "ST-02 (Near-Duplicate Primary Key) handling:\n- Store S007 appears twice with conflicting store names ('Downtown Rochester' vs 'Rochester Downtown').\n- Decision: Apply a 3-stage deterministic survivorship rule: (1) fewest nulls, (2) earliest opened_date, (3) lexicographically first store_name.\n- Outcome: Elects 'Downtown Rochester'. The losing row and reason are recorded in the audit ledger.\n- Rationale: drop_duplicates(keep='first') depends on CSV row order; a re-sorted file silently changes the winner. A 3-stage rule is 100% deterministic.",
@@ -347,7 +347,7 @@ function tradeoffAnswers(bundle: Bundle, facts: RunFacts): ScriptedAnswer[] {
       keywords: ["st-02", "survivorship", "store", "s007", "duplicate", "rochester"]
     },
     {
-      label: "⚡ TX-10 Return Rate Metric Choice",
+      label: "Trade-off — TX-10 Return Rate Metric Choice",
       defectCode: "TX-10",
       question: "How are return transactions (TX-10) modeled, and why emit both unit-based and txn-based rates?",
       answer: "TX-10 (Return Transactions) handling:\n- 30 return rows carry negative quantity and negative total_amount.\n- Decision: Preserved in fact_sales as signed negative rows with is_return = True.\n- Analytics: Dashboard emits both Unit Return Rate (returned units / total units) and Txn Return Rate (return txns / total txns).\n- Example: Store S006 has a 13.73% unit return rate vs a 12.50% txn return rate.\n- Rationale: Storing signed negatives makes SUM(net_amount) equal net revenue without joins or special cases, while exposing both metrics resolves retail definition ambiguity.",
@@ -364,7 +364,7 @@ function tradeoffAnswers(bundle: Bundle, facts: RunFacts): ScriptedAnswer[] {
       keywords: ["tx-10", "returns", "unit_return_rate", "txn_return_rate", "s006", "signed"]
     },
     {
-      label: "⚡ Pinned Date vs Clock Drift",
+      label: "Trade-off — Pinned Date vs Clock Drift",
       defectCode: "TX-08",
       question: "Why is AS_OF_DATE = 2026-06-02 hard-pinned, and what breaks if datetime.now() is used?",
       answer: "Reference Date & Clock Drift (TX-08) handling:\n- The pipeline anchors all time-relative metrics on AS_OF_DATE = 2026-06-02 (the seed data reference date).\n- TX-08 flags 3 transactions dated +8, +16, and +25 days in the future as clock drift.\n- If datetime.now() were used instead: (1) trailing 30-day windows would go empty as calendar time passes, and (2) future-dated TX-08 transactions would silently turn into valid sales over time.\n- Rationale: Hard-pinning AS_OF_DATE guarantees 100% byte-reproducible pipeline outputs forever.",

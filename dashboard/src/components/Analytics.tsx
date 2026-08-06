@@ -171,9 +171,10 @@ function MetricCard({
         </div>
         <p className="mt-1.5 text-sm text-ink-dim">{metric.description}</p>
 
+        {/* The warn border and colour already carry the "caution" signal; the
+            emoji that used to sit here added tone, not information. */}
         {(id === "mom_revenue_by_category" || id === "mom_growth_by_category") && (
-          <div className="mt-2.5 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn flex items-center gap-2">
-            <span>⚠️</span>
+          <div className="mt-2.5 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
             <span>
               <strong>Partial Month Warning (June 2026):</strong> As of date is <code>2026-06-02</code> (only 2 days of data for June). The apparent 96-99% revenue drop in June 2026 is an artifact of the truncated 2-day window, not an operational decline.
             </span>
