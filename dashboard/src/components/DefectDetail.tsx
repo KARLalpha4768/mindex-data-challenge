@@ -120,6 +120,24 @@ export default function DefectDetail({
           )}
         </dl>
 
+        {/* ── Engineering Decision & Tradeoff Matrix ─────────────────────── */}
+        <div className="mt-5 rounded-lg border border-accent/30 bg-raised/80 p-3.5 space-y-2">
+          <div className="text-2xs font-semibold uppercase tracking-wider text-accent flex items-center gap-1.5">
+            <span>⚖️</span>
+            <span>Engineering Decision & Tradeoff Matrix</span>
+          </div>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 text-xs">
+            <div className="rounded border border-green-500/30 bg-green-500/10 p-2.5">
+              <span className="font-semibold text-green-400 block mb-1 font-mono">Selected Action:</span>
+              <span className="text-ink leading-relaxed">{defect.decision}</span>
+            </div>
+            <div className="rounded border border-amber-500/30 bg-amber-500/10 p-2.5">
+              <span className="font-semibold text-amber-400 block mb-1 font-mono">Rationale & Rejected Alternatives:</span>
+              <span className="text-ink-dim leading-relaxed">{defect.rationale}</span>
+            </div>
+          </div>
+        </div>
+
         {/* ── Affected business keys ───────────────────────────────────── */}
         <section className="mt-6">
           <h4 className="text-2xs font-medium uppercase tracking-wider text-ink-faint">
