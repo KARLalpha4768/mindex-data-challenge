@@ -6,6 +6,7 @@ import Analytics from "@/components/Analytics";
 import ChatAssistant from "@/components/ChatAssistant";
 import DataProfile from "@/components/DataProfile";
 import DefectExplorer from "@/components/DefectExplorer";
+import InterviewerGuideModal from "@/components/InterviewerGuideModal";
 import Lineage from "@/components/Lineage";
 import Overview from "@/components/Overview";
 import RawVsCleanInspector from "@/components/RawVsCleanInspector";
@@ -97,6 +98,7 @@ export default function Dashboard({
   // markup matches; the effect below then applies whatever hash the URL carries.
   // Reading location during render would be a hydration mismatch.
   const [route, setRoute] = React.useState<Route>(DEFAULT_ROUTE);
+  const [showGuide, setShowGuide] = React.useState(false);
 
   React.useEffect(() => {
     const sync = () => setRoute(parseHash(window.location.hash));
@@ -150,6 +152,13 @@ export default function Dashboard({
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-2xs">
+              <button
+                type="button"
+                onClick={() => setShowGuide(true)}
+                className="rounded border border-accent/40 bg-accent/15 px-2.5 py-1 font-mono text-2xs font-semibold text-accent hover:bg-accent/25 transition-colors flex items-center gap-1 shadow-sm"
+              >
+                <span>🎯</span> Interviewer Guide
+              </button>
               <Badge tone="mono" title="Frozen analysis date used by every time-relative metric">
                 as_of {bundle.run.as_of_date}
               </Badge>
@@ -251,6 +260,8 @@ export default function Dashboard({
       {route.view !== "assistant" && (
         <ChatAssistant bundle={bundle} defects={defects} onSelectDefect={goToDefect} />
       )}
+
+      <InterviewerGuideModal isOpen={showGuide} onClose={() => setShowGuide(false)} />
 
       <footer className="border-t border-line px-4 py-6 sm:px-6">
         <div className="mx-auto flex max-w-screen flex-wrap items-center justify-between gap-3 text-2xs text-ink-faint">
