@@ -64,7 +64,7 @@ export default function InterviewerGuideModal({ isOpen, onClose }: Props) {
                 <span>💰</span> 1. Zero-Loss Revenue Tie-Out
               </div>
               <p className="text-ink-dim leading-relaxed">
-                Raw revenue of <strong>$158,044.29</strong> across 505 rows reconciles 100% to the warehouse. Preserved $961.48 in silent discounts (<code className="font-mono">TX-03</code>) and routed $615.85 to quarantine (<code className="font-mono">TX-04</code>). <strong>$0.00 drift delta.</strong>
+                Net revenue of <strong>$158,044.29</strong> across 505 raw transactions reconciles 100% to the warehouse (474 kept + 16 quarantined + 15 dropped = 505). Preserving reported totals avoided inventing $961.48 in revenue. <strong>$0.00 drift delta.</strong>
               </p>
             </div>
 
