@@ -1,0 +1,5 @@
+# Enforce LF line endings for datasets and Python scripts to prevent CRLF diff noise
+data/raw/*.csv text eol=lf
+scripts/*.py text eol=lf
+solution/src/**/*.py text eol=lf
+*.py text eol=lf

@@ -335,20 +335,6 @@ const PARSERS = [
     ),
   },
   {
-    regex: /\b(survivorship|imputation|star schema|deterministic|authoritative)\b/gi,
-    render: (match: string) => {
-      const def = JARGON_DICT[match.toLowerCase()];
-      return (
-        <abbr
-          title={def}
-          className="cursor-help underline decoration-dotted decoration-ink-dim/50 underline-offset-4"
-        >
-          {match}
-        </abbr>
-      );
-    },
-  },
-  {
     regex: /\b(nulls|duplicates|invalid zips|outliers)\b/gi,
     render: (match: string) => (
       <a href="#profile" className="font-semibold text-pink-400 hover:underline" title="View Data Profile">
