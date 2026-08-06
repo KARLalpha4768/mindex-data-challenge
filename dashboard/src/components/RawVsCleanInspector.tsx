@@ -156,10 +156,14 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
       const strA = String(valA).trim();
       const strB = String(valB).trim();
 
-      const numA = parseFloat(strA.replace(/[^0-9.-]+/g, ""));
-      const numB = parseFloat(strB.replace(/[^0-9.-]+/g, ""));
-      const isNumA = !isNaN(numA) && strA !== "" && /^[$-]?[\d,]+(\.\d+)?%?$/.test(strA);
-      const isNumB = !isNaN(numB) && strB !== "" && /^[$-]?[\d,]+(\.\d+)?%?$/.test(strB);
+      const cleanNumA = strA.replace(/[$,]/g, "");
+      const cleanNumB = strB.replace(/[$,]/g, "");
+
+      const numA = Number(cleanNumA);
+      const numB = Number(cleanNumB);
+
+      const isNumA = strA !== "" && !isNaN(numA);
+      const isNumB = strB !== "" && !isNaN(numB);
 
       let cmp = 0;
       if (isNumA && isNumB) {
