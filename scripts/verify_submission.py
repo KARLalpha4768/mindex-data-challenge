@@ -698,7 +698,15 @@ def verify(keep_artifacts: bool) -> int:
         # WHY figure parity and not a textual diff: the two documents legitimately
         # differ in their paths and their opening orientation. What must never differ
         # is the set of numbers they publish -- that is the drift that matters, and it
-        # is the drift a reader would never spot.
+        # is what this check asserts.
+        summary_gate = run_step(
+            [sys.executable, str(SOLUTION_DIR / "scripts" / "generate_executive_summary.py"),
+             "--output-dir", str(output_dir), "--check"],
+            cwd=SOLUTION_DIR,
+        )
+        gate_ok &= summary_gate.returncode == 0
+        report.add("executive summary matches this run", 0,
+                   summary_gate.returncode, detail=tail(summary_gate.stdout + "\n" + summary_gate.stderr, 20))
         root_figs, solution_figs = cited_figures(ROOT_README), cited_figures(SOLUTION_README)
         only_root = sorted(root_figs - solution_figs)
         only_solution = sorted(solution_figs - root_figs)
