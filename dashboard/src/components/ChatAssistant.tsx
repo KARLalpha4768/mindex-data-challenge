@@ -231,6 +231,111 @@ function AuditNote({ audit }: { audit: NumericAudit }) {
   );
 }
 
+const JARGON_DICT: Record<string, string> = {
+  survivorship: "Determines which duplicate row is kept based on timestamp.",
+  imputation: "Replacing missing values with derived or default values.",
+  "star schema": "A dimensional model with a central fact table and surrounding dimension tables.",
+  deterministic: "Given the same input, the pipeline will always produce the exact same output.",
+  authoritative: "The primary source of truth that should not be overwritten.",
+};
+
+const PARSERS = [
+  {
+    regex: /\b(ST-\d{2}|PR-\d{2}|TX-\d{2})\b/gi,
+    render: (match: string, knownCodes: Set<string>, onSelectDefect?: (c: string) => void) => {
+      const code = match.toUpperCase();
+      if (knownCodes.has(code) && onSelectDefect) {
+        return (
+          <button
+            type="button"
+            onClick={() => onSelectDefect(code)}
+            className="font-mono font-semibold text-accent hover:underline focus:outline-none"
+            title={`View ${code} in Defect Explorer`}
+          >
+            {match}
+          </button>
+        );
+      }
+      return <span className="font-mono text-ink-dim">{match}</span>;
+    },
+  },
+  {
+    regex: /\b(transactions|stores|products|warehouse)\b/gi,
+    render: (match: string) => (
+      <a href="#schema" className="font-semibold text-blue-400 hover:underline" title="View in Schema">
+        {match}
+      </a>
+    ),
+  },
+  {
+    regex: /\b(net revenue|aov|average order value|metrics|discount total)\b/gi,
+    render: (match: string) => (
+      <a href="#analytics" className="font-semibold text-emerald-400 hover:underline" title="View in Analytics">
+        {match}
+      </a>
+    ),
+  },
+  {
+    regex: /\b(src\/[\w/]+\.py:\d+)\b/gi,
+    render: (match: string) => {
+      const [file, line] = match.split(":");
+      return (
+        <a
+          href={`https://github.com/KARLalpha4768/mindex-data-challenge/blob/main/${file}#L${line}`}
+          target="_blank"
+          rel="noreferrer"
+          className="font-mono text-xs text-orange-400 hover:underline"
+          title="View source on GitHub"
+        >
+          {match}
+        </a>
+      );
+    },
+  },
+  {
+    regex: /\b(Raw CSVs|Cleaning Phase|Star Schema Warehouse|Lineage)\b/gi,
+    render: (match: string) => (
+      <a href="#lineage" className="font-semibold text-purple-400 hover:underline" title="View Lineage Map">
+        {match}
+      </a>
+    ),
+  },
+  {
+    regex: /\b(survivorship|imputation|star schema|deterministic|authoritative)\b/gi,
+    render: (match: string) => {
+      const def = JARGON_DICT[match.toLowerCase()];
+      return (
+        <abbr
+          title={def}
+          className="cursor-help underline decoration-dotted decoration-ink-dim/50 underline-offset-4"
+        >
+          {match}
+        </abbr>
+      );
+    },
+  },
+  {
+    regex: /\b(nulls|duplicates|invalid zips|outliers)\b/gi,
+    render: (match: string) => (
+      <a href="#profile" className="font-semibold text-pink-400 hover:underline" title="View Data Profile">
+        {match}
+      </a>
+    ),
+  },
+  {
+    regex: /\b(verification|tests|pytest|unit-tested)\b/gi,
+    render: (match: string) => (
+      <a
+        href="#tests"
+        className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400 hover:bg-green-500/20"
+        title="View Test Results"
+      >
+        {match}
+      </a>
+    ),
+  },
+];
+
 function LinkedText({
   text,
   knownCodes,
@@ -240,41 +345,28 @@ function LinkedText({
   knownCodes: Set<string>;
   onSelectDefect?: (code: string) => void;
 }) {
-  const LINK_RE = /\b(ST-\d{2}|PR-\d{2}|TX-\d{2})\b/gi;
-  const parts = text.split(LINK_RE);
+  let nodes: React.ReactNode[] = [text];
 
-  if (parts.length === 1) return <>{text}</>;
-
-  return (
-    <>
-      {parts.map((part, i) => {
-        // Every odd index in the split result is a captured group match (a defect code)
-        if (i % 2 !== 0) {
-          const code = part.toUpperCase();
-          if (knownCodes.has(code) && onSelectDefect) {
-            return (
-              <button
-                key={i}
-                type="button"
-                onClick={() => onSelectDefect(code)}
-                className="font-mono font-semibold text-accent hover:underline focus:outline-none"
-                title={`View ${code} in Defect Explorer`}
-              >
-                {part}
-              </button>
-            );
+  for (const parser of PARSERS) {
+    const nextNodes: React.ReactNode[] = [];
+    for (const node of nodes) {
+      if (typeof node === "string") {
+        const parts = node.split(parser.regex);
+        for (let i = 0; i < parts.length; i++) {
+          if (i % 2 === 0) {
+            if (parts[i]) nextNodes.push(parts[i]);
           } else {
-            return (
-              <span key={i} className="font-mono text-ink-dim">
-                {part}
-              </span>
-            );
+            nextNodes.push(parser.render(parts[i], knownCodes, onSelectDefect));
           }
         }
-        return <React.Fragment key={i}>{part}</React.Fragment>;
-      })}
-    </>
-  );
+      } else {
+        nextNodes.push(node);
+      }
+    }
+    nodes = nextNodes;
+  }
+
+  return <>{React.Children.toArray(nodes)}</>;
 }
 
 export default function ChatAssistant({ bundle, defects, onSelectDefect }: Props) {
