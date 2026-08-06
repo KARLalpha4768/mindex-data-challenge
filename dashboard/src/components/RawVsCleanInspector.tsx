@@ -47,7 +47,28 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
 
   const [flashingCell, setFlashingCell] = React.useState<{ row_id: string; col: string } | null>(null);
   const flashTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+  
+  const rawContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const cleanContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const rawRowRefs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
   const cleanRowRefs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
+  const isSyncingScroll = React.useRef<boolean>(false);
+
+  const syncScroll = (source: "raw" | "clean") => {
+    if (isSyncingScroll.current) return;
+    isSyncingScroll.current = true;
+    
+    const srcEl = source === "raw" ? rawContainerRef.current : cleanContainerRef.current;
+    const targetEl = source === "raw" ? cleanContainerRef.current : rawContainerRef.current;
+    
+    if (srcEl && targetEl) {
+      targetEl.scrollTop = srcEl.scrollTop;
+    }
+    
+    requestAnimationFrame(() => {
+      isSyncingScroll.current = false;
+    });
+  };
 
   const handleCellClick = (row_id: string, col: string, info: CellInfo) => {
     setActiveCell({ row_id, col, info });
@@ -59,10 +80,16 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
       setFlashingCell(null);
     }, 15000);
 
-    // Auto-scroll the clean table to bring corresponding row into view
-    const targetRowEl = cleanRowRefs.current[row_id];
-    if (targetRowEl) {
-      targetRowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Synchronize both raw and clean tables so target row aligns perfectly across the screen
+    const rawRowEl = rawRowRefs.current[row_id];
+    if (rawRowEl && rawContainerRef.current && cleanContainerRef.current) {
+      const containerHeight = rawContainerRef.current.clientHeight;
+      const rowTop = rawRowEl.offsetTop;
+      const rowHeight = rawRowEl.offsetHeight;
+      const targetScrollTop = Math.max(0, rowTop - containerHeight / 2 + rowHeight / 2);
+
+      rawContainerRef.current.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+      cleanContainerRef.current.scrollTo({ top: targetScrollTop, behavior: "smooth" });
     }
   };
 
@@ -229,20 +256,30 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
               <span>Original Raw CSV ({dataset}.csv)</span>
               <span>Red cells = Seeded Defects</span>
             </div>
-            <div className="max-h-[600px] overflow-auto rounded-lg border border-line bg-panel">
+            <div
+              ref={rawContainerRef}
+              onScroll={() => syncScroll("raw")}
+              className="max-h-[600px] overflow-auto rounded-lg border border-line bg-panel scroll-smooth"
+            >
               <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono">
+                <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono z-20">
                   <tr>
-                    <th className="p-2 border-r border-line/50">#</th>
+                    <th className="p-2 border-r border-line/50 whitespace-nowrap">#</th>
                     {headers.map((h) => (
-                      <th key={h} className="p-2 border-r border-line/50 font-semibold">{h}</th>
+                      <th key={h} className="p-2 border-r border-line/50 font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/40 font-mono">
                   {filteredRows.map((r, i) => (
-                    <tr key={r.row_id} className="hover:bg-raised/40">
-                      <td className="p-2 border-r border-line/50 text-ink-faint text-2xs">{i + 1}</td>
+                    <tr
+                      key={r.row_id}
+                      ref={(el) => {
+                        rawRowRefs.current[r.row_id] = el;
+                      }}
+                      className="hover:bg-raised/40 transition-colors h-9"
+                    >
+                      <td className="p-2 border-r border-line/50 text-ink-faint text-2xs whitespace-nowrap">{i + 1}</td>
                       {headers.map((h) => {
                         const cell = r.cells[h] ?? { raw_value: "", status: "clean" };
                         const isErr = cell.status === "error" || cell.status === "fixed";
@@ -250,7 +287,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
                           <td
                             key={h}
                             onClick={() => isErr && handleCellClick(r.row_id, h, cell)}
-                            className={`p-2 border-r border-line/50 transition-colors ${
+                            className={`p-2 border-r border-line/50 transition-colors whitespace-nowrap ${
                               isErr
                                 ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
                                 : "text-ink-dim"
@@ -281,13 +318,17 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
               <span>Cleaned Pipeline Output ({dataset}_clean.csv)</span>
               <span>Green cells = Transformed / Imputed</span>
             </div>
-            <div className="max-h-[600px] overflow-auto rounded-lg border border-line bg-panel">
+            <div
+              ref={cleanContainerRef}
+              onScroll={() => syncScroll("clean")}
+              className="max-h-[600px] overflow-auto rounded-lg border border-line bg-panel scroll-smooth"
+            >
               <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono">
+                <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono z-20">
                   <tr>
-                    <th className="p-2 border-r border-line/50">#</th>
+                    <th className="p-2 border-r border-line/50 whitespace-nowrap">#</th>
                     {headers.map((h) => (
-                      <th key={h} className="p-2 border-r border-line/50 font-semibold">{h}</th>
+                      <th key={h} className="p-2 border-r border-line/50 font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -298,9 +339,9 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
                       ref={(el) => {
                         cleanRowRefs.current[r.row_id] = el;
                       }}
-                      className="hover:bg-raised/40 transition-colors"
+                      className="hover:bg-raised/40 transition-colors h-9"
                     >
-                      <td className="p-2 border-r border-line/50 text-ink-faint text-2xs">{i + 1}</td>
+                      <td className="p-2 border-r border-line/50 text-ink-faint text-2xs whitespace-nowrap">{i + 1}</td>
                       {headers.map((h) => {
                         const cell = r.cells[h] ?? { clean_value: "", status: "clean" };
                         const isFixed = cell.status === "fixed" || cell.status === "error";
@@ -310,7 +351,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
                           <td
                             key={h}
                             onClick={() => isFixed && handleCellClick(r.row_id, h, cell)}
-                            className={`p-2 border-r border-line/50 transition-all duration-300 ${
+                            className={`p-2 border-r border-line/50 transition-all duration-300 whitespace-nowrap ${
                               isFlashing
                                 ? "bg-green-500/40 text-green-100 font-bold ring-4 ring-green-400 animate-pulse shadow-xl shadow-green-500/50 z-10"
                                 : isFixed
