@@ -18,6 +18,12 @@ interface RowData {
   cells: Record<string, CellInfo>;
 }
 
+/** A `RowData` carrying the unique render key assigned at load time. */
+interface KeyedRow extends RowData {
+  /** Source-array position. Unique even when `row_id` is not. */
+  uid: string;
+}
+
 interface DatasetDiff {
   headers: string[];
   rows: RowData[];
@@ -34,6 +40,147 @@ interface Props {
   onSelectDefect?: (code: string) => void;
 }
 
+/* ── Sorting ────────────────────────────────────────────────────────────────
+ *
+ * WHY ONE SORT STATE FOR TWO TABLES: the panes are side by side and their rows
+ * correspond one-to-one by `row_id`. Sorting them independently would silently
+ * destroy that correspondence — row 4 on the left would stop being row 4 on the
+ * right — and would also break the click-to-scroll behaviour, which looks up a
+ * clean-side row by id and scrolls it into view. So a click on either header
+ * reorders BOTH tables identically.
+ *
+ * WHICH VALUE IS SORTED ON: the one in the pane you clicked. Clicking a header
+ * on the raw side orders by the raw strings, which is what someone auditing the
+ * source file expects; clicking on the clean side orders by the cleaned values.
+ * Both produce the same row order across the two tables.
+ */
+type SortDirection = "asc" | "desc";
+type SortSource = "raw" | "clean";
+
+interface SortState {
+  col: string;
+  dir: SortDirection;
+  source: SortSource;
+}
+
+/** Strip currency symbols, thousands separators and stray whitespace. */
+const NUMERIC_RE = /^-?[$€£]?\s*-?[\d,]+(\.\d+)?%?$/;
+
+/**
+ * Best-effort typed value for comparison.
+ *
+ * WHY THIS IS NOT `String.localeCompare` ALONE: this table's whole subject is
+ * messy source data. `total_amount` arrives as a mix of `142.50` and `"$142.50"`
+ * (defect TX-02) and `transaction_date` in three different formats (TX-01). A
+ * plain string sort puts `$99.00` after `$1,000.00` and scatters the dates,
+ * which would make the sort actively misleading in the one view built to expose
+ * exactly those defects.
+ *
+ * Returns a number for anything numeric or date-like, otherwise a lowercased
+ * string. Empty values sort last in both directions — a blank is an absence,
+ * not a minimum, and burying it under the data is worse than parking it at the
+ * end where it can be seen.
+ */
+function comparableValue(raw: string): number | string | null {
+  const text = (raw ?? "").trim();
+  if (!text) return null;
+
+  if (NUMERIC_RE.test(text)) {
+    const numeric = Number(text.replace(/[$€£,%\s]/g, ""));
+    if (Number.isFinite(numeric)) return numeric;
+  }
+
+  // Dates: ISO, US (MM/DD/YYYY) and EU (DD-MM-YYYY) all appear in this data.
+  // Compared as epoch days so the three formats interleave correctly instead of
+  // sorting into three separate alphabetical blocks.
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+  if (iso) return Date.UTC(+iso[1], +iso[2] - 1, +iso[3]);
+  const us = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(text);
+  if (us) return Date.UTC(+us[3], +us[1] - 1, +us[2]);
+  const eu = /^(\d{2})-(\d{2})-(\d{4})$/.exec(text);
+  if (eu) return Date.UTC(+eu[3], +eu[2] - 1, +eu[1]);
+
+  return text.toLowerCase();
+}
+
+function compareRows(a: RowData, b: RowData, sort: SortState): number {
+  const pick = (row: RowData) => {
+    const cell = row.cells[sort.col];
+    if (!cell) return null;
+    return comparableValue(sort.source === "raw" ? cell.raw_value : cell.clean_value);
+  };
+
+  const left = pick(a);
+  const right = pick(b);
+
+  // Empties last, regardless of direction. See comparableValue.
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+
+  let result: number;
+  if (typeof left === "number" && typeof right === "number") {
+    result = left - right;
+  } else {
+    result = String(left).localeCompare(String(right), undefined, { numeric: true });
+  }
+  return sort.dir === "asc" ? result : -result;
+}
+
+/**
+ * A clickable column header.
+ *
+ * Cycles through ascending → descending → unsorted. The third state matters
+ * here: the source order IS the file order, which is information — row 1 is the
+ * first line of the CSV — so there has to be a way back to it without a reload.
+ *
+ * Rendered as a real `<button>` inside the `<th>` so it is keyboard reachable,
+ * and carries `aria-sort` so the current state is announced rather than being
+ * conveyed by a glyph alone.
+ */
+function SortableHeader({
+  label,
+  source,
+  sort,
+  onSort,
+}: {
+  label: string;
+  source: SortSource;
+  sort: SortState | null;
+  onSort: (col: string, source: SortSource) => void;
+}) {
+  const active = sort?.col === label && sort.source === source;
+  const ariaSort = active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none";
+
+  return (
+    <th
+      className="border-r border-line/50 p-0 font-semibold"
+      aria-sort={ariaSort as React.AriaAttributes["aria-sort"]}
+      scope="col"
+    >
+      <button
+        type="button"
+        onClick={() => onSort(label, source)}
+        className={`flex w-full items-center gap-1 p-2 text-left transition-colors hover:bg-line/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+          active ? "text-accent" : ""
+        }`}
+        title={
+          active
+            ? `Sorted ${sort!.dir === "asc" ? "ascending" : "descending"} — click to ${
+                sort!.dir === "asc" ? "reverse" : "clear"
+              }`
+            : `Sort by ${label}`
+        }
+      >
+        <span className="truncate">{label}</span>
+        <span aria-hidden="true" className={active ? "text-accent" : "text-ink-faint/50"}>
+          {active ? (sort!.dir === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
   const [data, setData] = React.useState<CsvDiffData | null>(null);
   const [dataset, setDataset] = React.useState<"transactions" | "products" | "stores">("transactions");
@@ -45,78 +192,38 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
     info: CellInfo;
   } | null>(null);
 
-  const [flashingCell, setFlashingCell] = React.useState<{ row_id: string; col: string } | null>(null);
+  const [sort, setSort] = React.useState<SortState | null>(null);
+  // Keyed by `uid`, not `row_id` — see the keyedRows comment. Two duplicate
+  // rows must be able to flash independently.
+  const [flashingCell, setFlashingCell] = React.useState<{ uid: string; col: string } | null>(null);
   const flashTimerRef = React.useRef<NodeJS.Timeout | null>(null);
-
-  const [sortCol, setSortCol] = React.useState<string | null>(null);
-  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
-
-  React.useEffect(() => {
-    setSortCol(null);
-    setSortDir("asc");
-  }, [dataset]);
-
-  React.useEffect(() => {
-    if (rawContainerRef.current) rawContainerRef.current.scrollTop = 0;
-    if (cleanContainerRef.current) cleanContainerRef.current.scrollTop = 0;
-  }, [sortCol, sortDir]);
-
-  const handleHeaderClick = (colName: string) => {
-    if (sortCol === colName) {
-      if (sortDir === "asc") {
-        setSortDir("desc");
-      } else {
-        setSortCol(null);
-        setSortDir("asc");
-      }
-    } else {
-      setSortCol(colName);
-      setSortDir("asc");
-    }
-  };
-  
-  const rawContainerRef = React.useRef<HTMLDivElement | null>(null);
-  const cleanContainerRef = React.useRef<HTMLDivElement | null>(null);
-  const rawRowRefs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
   const cleanRowRefs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
-  const isSyncingScroll = React.useRef<boolean>(false);
 
-  const syncScroll = (source: "raw" | "clean") => {
-    if (isSyncingScroll.current) return;
-    isSyncingScroll.current = true;
-    
-    const srcEl = source === "raw" ? rawContainerRef.current : cleanContainerRef.current;
-    const targetEl = source === "raw" ? cleanContainerRef.current : rawContainerRef.current;
-    
-    if (srcEl && targetEl) {
-      targetEl.scrollTop = srcEl.scrollTop;
-    }
-    
-    requestAnimationFrame(() => {
-      isSyncingScroll.current = false;
+  /** Cycle a column: ascending → descending → back to source (file) order. */
+  const handleSort = React.useCallback((col: string, source: SortSource) => {
+    setSort((current) => {
+      if (!current || current.col !== col || current.source !== source) {
+        return { col, source, dir: "asc" };
+      }
+      if (current.dir === "asc") return { col, source, dir: "desc" };
+      return null;
     });
-  };
+  }, []);
 
-  const handleCellClick = (row_id: string, col: string, info: CellInfo) => {
+  const handleCellClick = (uid: string, row_id: string, col: string, info: CellInfo) => {
     setActiveCell({ row_id, col, info });
 
     // Set flashing cell state for 15 seconds
-    setFlashingCell({ row_id, col });
+    setFlashingCell({ uid, col });
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     flashTimerRef.current = setTimeout(() => {
       setFlashingCell(null);
     }, 15000);
 
-    // Synchronize both raw and clean tables so target row aligns perfectly across the screen
-    const rawRowEl = rawRowRefs.current[row_id];
-    if (rawRowEl && rawContainerRef.current && cleanContainerRef.current) {
-      const containerHeight = rawContainerRef.current.clientHeight;
-      const rowTop = rawRowEl.offsetTop;
-      const rowHeight = rawRowEl.offsetHeight;
-      const targetScrollTop = Math.max(0, rowTop - containerHeight / 2 + rowHeight / 2);
-
-      rawContainerRef.current.scrollTo({ top: targetScrollTop, behavior: "smooth" });
-      cleanContainerRef.current.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+    // Auto-scroll the clean table to bring corresponding row into view
+    const targetRowEl = cleanRowRefs.current[row_id];
+    if (targetRowEl) {
+      targetRowEl.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
 
@@ -126,6 +233,13 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
     };
   }, []);
 
+  // Changing dataset changes the columns, so a sort keyed to a column that no
+  // longer exists would silently do nothing. Reset rather than leave a stale
+  // indicator pointing at a header that is gone.
+  React.useEffect(() => {
+    setSort(null);
+  }, [dataset]);
+
   React.useEffect(() => {
     fetch("/data/csv_diff.json")
       .then((r) => r.json())
@@ -134,49 +248,39 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
   }, []);
 
   const currentDataset = data?.[dataset];
-  const headers = currentDataset?.headers ?? [];
-  const rows = currentDataset?.rows ?? [];
 
-  const filteredRows = React.useMemo(() => {
-    return rows.filter((r) => {
-      if (!r) return false;
-      if (selectedCode === "all") return true;
-      return Array.isArray(r.defects) && r.defects.includes(selectedCode);
-    });
-  }, [rows, selectedCode]);
-
-  const allCodes = React.useMemo(() => {
-    return Array.from(new Set(rows.flatMap((r) => r?.defects || []))).sort();
-  }, [rows]);
-
-  const sortedRows = React.useMemo(() => {
-    if (!sortCol) return filteredRows;
-    return [...filteredRows].sort((a, b) => {
-      if (!a?.cells || !b?.cells) return 0;
-      const cellA = a.cells[sortCol];
-      const cellB = b.cells[sortCol];
-      const valA = cellA?.clean_value || cellA?.raw_value || "";
-      const valB = cellB?.clean_value || cellB?.raw_value || "";
-
-      const strA = String(valA).trim();
-      const strB = String(valB).trim();
-
-      const numA = parseFloat(strA.replace(/[^0-9.-]/g, ""));
-      const numB = parseFloat(strB.replace(/[^0-9.-]/g, ""));
-
-      const isNumA = !isNaN(numA) && /[0-9]/.test(strA);
-      const isNumB = !isNaN(numB) && /[0-9]/.test(strB);
-
-      let cmp = 0;
-      if (isNumA && isNumB) {
-        cmp = numA - numB;
-      } else {
-        cmp = strA.localeCompare(strB, undefined, { numeric: true, sensitivity: "base" });
-      }
-
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-  }, [filteredRows, sortCol, sortDir]);
+  /*
+   * A STABLE, UNIQUE KEY PER ROW — and why this is not cosmetic.
+   *
+   * `row_id` is the transaction id, and it is NOT unique: the 15 TX-09 rows are
+   * *exact duplicates*, so they carry the same id by definition. That is the
+   * defect this view exists to display.
+   *
+   * Using it as a React `key` therefore hands React 505 keys of which 490 are
+   * distinct. React then cannot tell those 15 rows apart across a re-render, so
+   * on sort it reuses the wrong DOM nodes: the duplicated block refuses to
+   * reorder while unique rows sort correctly, and a second click appears to do
+   * nothing at all. That is exactly the "sorts a bit, but not really" behaviour
+   * observed on the deployed build.
+   *
+   * `uid` is the row's position in the SOURCE array — unique by construction,
+   * assigned once, and unchanged by sorting or filtering. It also fixes the
+   * clean-row ref map, which was keyed by `row_id` and so collided for those
+   * same 15 rows, sending scroll-to-row to whichever duplicate registered last.
+   *
+   * NOTE ON PLACEMENT: this hook sits ABOVE the loading early-return, and must
+   * stay there. React requires the same hooks in the same order on every
+   * render; a `useMemo` placed after a conditional `return` runs on some
+   * renders and not others, which is React error #310 — a blank page with
+   * "Application error: a client-side exception has occurred". The first
+   * version of this fix made exactly that mistake and took the deployed site
+   * down. Hence `?? []`: the hook always runs, and simply has nothing to map
+   * until the fetch resolves.
+   */
+  const keyedRows: KeyedRow[] = React.useMemo(
+    () => (currentDataset?.rows ?? []).map((r, sourceIndex) => ({ ...r, uid: `${sourceIndex}` })),
+    [currentDataset],
+  );
 
   if (!currentDataset) {
     return (
@@ -185,6 +289,21 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
       </div>
     );
   }
+
+  const { headers } = currentDataset;
+
+  const filteredRows = keyedRows.filter((r) => {
+    if (selectedCode === "all") return true;
+    return r.defects.includes(selectedCode);
+  });
+
+  // One ordering, applied to both panes. `slice()` first because `sort` mutates
+  // in place and `filteredRows` is derived from the loaded dataset — sorting it
+  // directly would permanently scramble the source order this view lets you
+  // return to.
+  const displayRows = sort ? filteredRows.slice().sort((a, b) => compareRows(a, b, sort)) : filteredRows;
+
+  const allCodes = Array.from(new Set(keyedRows.flatMap((r) => r.defects))).sort();
 
   return (
     <div className="space-y-6">
@@ -237,7 +356,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
             onChange={(e) => setSelectedCode(e.target.value)}
             className="rounded-lg border border-line bg-raised px-3 py-1.5 text-xs text-ink focus:outline-none focus:ring-1 focus:ring-accent"
           >
-            <option value="all">All Rows ({rows.length})</option>
+            <option value="all">All Rows ({keyedRows.length})</option>
             {allCodes.map((code) => (
               <option key={code} value={code}>
                 Filter by {code}
@@ -316,73 +435,39 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-semibold text-red-400">
               <span>Original Raw CSV ({dataset}.csv)</span>
-              <span>Red cells = Seeded Defects {sortCol && <span className="ml-2 text-accent">(Sorted by {sortCol} {sortDir === "asc" ? "▲" : "▼"})</span>}</span>
+              <span>Red cells = Seeded Defects</span>
             </div>
-            <div
-              ref={rawContainerRef}
-              onScroll={() => syncScroll("raw")}
-              className="max-h-[600px] overflow-auto rounded-lg border border-line bg-panel scroll-smooth"
-            >
+            <div className="max-h-[600px] overflow-auto rounded-lg border border-line bg-panel">
               <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono z-20">
+                <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono">
                   <tr>
-                    <th
-                      onClick={() => setSortCol(null)}
-                      className="p-2 border-r border-line/50 whitespace-nowrap cursor-pointer hover:bg-raised/80 select-none"
-                      title="Click to reset row sorting"
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span>#</span>
-                        {sortCol && <span className="text-2xs text-accent">↺</span>}
-                      </div>
-                    </th>
-                    {headers.map((h) => {
-                      const isSorted = sortCol === h;
-                      return (
-                        <th
-                          key={h}
-                          onClick={() => handleHeaderClick(h)}
-                          className={`p-2 border-r border-line/50 font-semibold whitespace-nowrap cursor-pointer hover:bg-raised/80 select-none transition-colors ${
-                            isSorted ? "bg-accent/15 text-accent" : "hover:text-ink"
-                          }`}
-                          title={`Click to sort by ${h}`}
-                        >
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span>{h}</span>
-                            <span className={`text-2xs font-bold ${isSorted ? "text-accent" : "text-ink-faint opacity-60"}`}>
-                              {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
-                            </span>
-                          </div>
-                        </th>
-                      );
-                    })}
+                    <th className="p-2 border-r border-line/50">#</th>
+                    {headers.map((h) => (
+                      <SortableHeader
+                        key={h}
+                        label={h}
+                        source="raw"
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/40 font-mono">
-                  {sortedRows.map((r, i) => (
-                    <tr
-                      key={r.row_id}
-                      ref={(el) => {
-                        rawRowRefs.current[r.row_id] = el;
-                      }}
-                      className="hover:bg-raised/40 transition-colors h-9"
-                    >
-                      <td className="p-2 border-r border-line/50 text-ink-faint text-2xs whitespace-nowrap">{i + 1}</td>
+                  {displayRows.map((r, i) => (
+                    <tr key={r.uid} className="hover:bg-raised/40">
+                      <td className="p-2 border-r border-line/50 text-ink-faint text-2xs">{i + 1}</td>
                       {headers.map((h) => {
                         const cell = r.cells[h] ?? { raw_value: "", status: "clean" };
                         const isErr = cell.status === "error" || cell.status === "fixed";
-                        const isFlashing = flashingCell?.row_id === r.row_id && flashingCell?.col === h;
-
                         return (
                           <td
                             key={h}
-                            onClick={() => isErr && handleCellClick(r.row_id, h, cell)}
-                            className={`p-2 border-r border-line/50 transition-all duration-300 whitespace-nowrap ${
-                              isFlashing
-                                ? "bg-red-500/40 text-red-100 font-bold ring-4 ring-red-400 animate-pulse shadow-xl shadow-red-500/50 z-10"
-                                : isErr
-                                  ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
-                                  : "text-ink-dim"
+                            onClick={() => isErr && handleCellClick(r.uid, r.row_id, h, cell)}
+                            className={`p-2 border-r border-line/50 transition-colors ${
+                              isErr
+                                ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
+                                : "text-ink-dim"
                             }`}
                             title={isErr ? `Click to inspect ${cell.defect_code}` : undefined}
                           >
@@ -408,68 +493,44 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-semibold text-green-400">
               <span>Cleaned Pipeline Output ({dataset}_clean.csv)</span>
-              <span>Green cells = Transformed / Imputed {sortCol && <span className="ml-2 text-accent">(Sorted by {sortCol} {sortDir === "asc" ? "▲" : "▼"})</span>}</span>
+              <span>Green cells = Transformed / Imputed</span>
             </div>
-            <div
-              ref={cleanContainerRef}
-              onScroll={() => syncScroll("clean")}
-              className="max-h-[600px] overflow-auto rounded-lg border border-line bg-panel scroll-smooth"
-            >
+            <div className="max-h-[600px] overflow-auto rounded-lg border border-line bg-panel">
               <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono z-20">
+                <thead className="sticky top-0 bg-raised border-b border-line text-ink-dim font-mono">
                   <tr>
-                    <th
-                      onClick={() => setSortCol(null)}
-                      className="p-2 border-r border-line/50 whitespace-nowrap cursor-pointer hover:bg-raised/80 select-none"
-                      title="Click to reset row sorting"
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span>#</span>
-                        {sortCol && <span className="text-2xs text-accent">↺</span>}
-                      </div>
-                    </th>
-                    {headers.map((h) => {
-                      const isSorted = sortCol === h;
-                      return (
-                        <th
-                          key={h}
-                          onClick={() => handleHeaderClick(h)}
-                          className={`p-2 border-r border-line/50 font-semibold whitespace-nowrap cursor-pointer hover:bg-raised/80 select-none transition-colors ${
-                            isSorted ? "bg-accent/15 text-accent" : "hover:text-ink"
-                          }`}
-                          title={`Click to sort by ${h}`}
-                        >
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span>{h}</span>
-                            <span className={`text-2xs font-bold ${isSorted ? "text-accent" : "text-ink-faint opacity-60"}`}>
-                              {isSorted ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
-                            </span>
-                          </div>
-                        </th>
-                      );
-                    })}
+                    <th className="p-2 border-r border-line/50">#</th>
+                    {headers.map((h) => (
+                      <SortableHeader
+                        key={h}
+                        label={h}
+                        source="clean"
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/40 font-mono">
-                  {sortedRows.map((r, i) => (
+                  {displayRows.map((r, i) => (
                     <tr
-                      key={r.row_id}
+                      key={r.uid}
                       ref={(el) => {
-                        cleanRowRefs.current[r.row_id] = el;
+                        cleanRowRefs.current[r.uid] = el;
                       }}
-                      className="hover:bg-raised/40 transition-colors h-9"
+                      className="hover:bg-raised/40 transition-colors"
                     >
-                      <td className="p-2 border-r border-line/50 text-ink-faint text-2xs whitespace-nowrap">{i + 1}</td>
+                      <td className="p-2 border-r border-line/50 text-ink-faint text-2xs">{i + 1}</td>
                       {headers.map((h) => {
                         const cell = r.cells[h] ?? { clean_value: "", status: "clean" };
                         const isFixed = cell.status === "fixed" || cell.status === "error";
-                        const isFlashing = flashingCell?.row_id === r.row_id && flashingCell?.col === h;
+                        const isFlashing = flashingCell?.uid === r.uid && flashingCell?.col === h;
 
                         return (
                           <td
                             key={h}
-                            onClick={() => isFixed && handleCellClick(r.row_id, h, cell)}
-                            className={`p-2 border-r border-line/50 transition-all duration-300 whitespace-nowrap ${
+                            onClick={() => isFixed && handleCellClick(r.uid, r.row_id, h, cell)}
+                            className={`p-2 border-r border-line/50 transition-all duration-300 ${
                               isFlashing
                                 ? "bg-green-500/40 text-green-100 font-bold ring-4 ring-green-400 animate-pulse shadow-xl shadow-green-500/50 z-10"
                                 : isFixed
