@@ -9,7 +9,7 @@ import DefectExplorer from "@/components/DefectExplorer";
 import InterviewerGuideModal from "@/components/InterviewerGuideModal";
 import Lineage from "@/components/Lineage";
 import Overview from "@/components/Overview";
-import RawVsCleanInspector from "@/components/RawVsCleanInspector";
+import RawVsCleanInspector, { type InspectorSelection } from "@/components/RawVsCleanInspector";
 import SchemaView from "@/components/SchemaView";
 import TestResults from "@/components/TestResults";
 import { Badge } from "@/components/ui";
@@ -30,11 +30,24 @@ import type { Bundle, DefectView } from "@/lib/types";
  *     #defects
  *     #defects/TX-03            -> Defect Explorer, TX-03 selected
  *     #defects/codes:TX-01,TX-02 -> Defect Explorer, filtered to those codes
+ *     #profile/dataset:stores   -> Data Profile, stores in focus
+ *     #analytics/metric:return_rate_by_store -> Analytics, that card in focus
  *
  * Hash rather than the Next router because `output: "export"` produces static
  * files: a real route change would need a separate HTML document per defect,
  * and hash changes cost no navigation at all. It also means a copied permalink
  * works from `file://`.
+ *
+ * THIS COMPONENT IS ALSO THE ASSISTANT'S SENSE OF PLACE
+ * ----------------------------------------------------
+ * The route state below is exactly what the grounded assistant needs in order to
+ * answer "what does this chart show?" — so it is handed to `ChatAssistant` as a
+ * structured `viewContext` prop rather than being re-derived there from
+ * `window.location` or read out of the DOM. One parser, one owner. The reasoning
+ * is written out in full in `chatContract.ts`; the practical consequence is that
+ * a child view holding focus state of its own (the Raw vs Clean inspector's
+ * dataset switch) reports it UP to this component, instead of the chat panel
+ * reaching sideways for it.
  */
 
 interface Props {
@@ -52,9 +65,19 @@ interface Route {
   defect: string | null;
   /** A code allow-list, from `#defects/codes:TX-01,TX-02`. */
   codeFilter: string[] | null;
+  /** A dataset in focus, from `#profile/dataset:stores`. */
+  dataset: string | null;
+  /** A metric in focus, from `#analytics/metric:return_rate_by_store`. */
+  metric: string | null;
 }
 
-const DEFAULT_ROUTE: Route = { view: "overview", defect: null, codeFilter: null };
+const DEFAULT_ROUTE: Route = {
+  view: "overview",
+  defect: null,
+  codeFilter: null,
+  dataset: null,
+  metric: null,
+};
 
 const VALID_VIEWS = new Set<string>(VIEWS.map((v) => v.id));
 
@@ -67,7 +90,7 @@ function parseHash(hash: string): Route {
 
   const view = viewPart as ViewId;
   const param = rest.join("/");
-  if (!param) return { view, defect: null, codeFilter: null };
+  if (!param) return { ...DEFAULT_ROUTE, view };
 
   if (param.startsWith("codes:")) {
     const codes = param
@@ -75,15 +98,30 @@ function parseHash(hash: string): Route {
       .split(",")
       .map((c) => c.trim().toUpperCase())
       .filter(Boolean);
-    return { view, defect: null, codeFilter: codes.length ? codes : null };
+    return { ...DEFAULT_ROUTE, view, codeFilter: codes.length ? codes : null };
   }
 
-  return { view, defect: param.toUpperCase(), codeFilter: null };
+  /* `dataset:` and `metric:` are additive prefixes. They cannot collide with the
+   * bare-defect form below, because a defect code never contains a colon — so
+   * every hash that worked before this change still parses to the same route. */
+  if (param.startsWith("dataset:")) {
+    const dataset = param.slice("dataset:".length).trim().toLowerCase();
+    return { ...DEFAULT_ROUTE, view, dataset: dataset || null };
+  }
+
+  if (param.startsWith("metric:")) {
+    const metric = param.slice("metric:".length).trim().toLowerCase();
+    return { ...DEFAULT_ROUTE, view, metric: metric || null };
+  }
+
+  return { ...DEFAULT_ROUTE, view, defect: param.toUpperCase() };
 }
 
 export function buildHash(route: Partial<Route> & { view: ViewId }): string {
   if (route.defect) return `#${route.view}/${route.defect}`;
   if (route.codeFilter?.length) return `#${route.view}/codes:${route.codeFilter.join(",")}`;
+  if (route.dataset) return `#${route.view}/dataset:${route.dataset}`;
+  if (route.metric) return `#${route.view}/metric:${route.metric}`;
   return `#${route.view}`;
 }
 
@@ -99,6 +137,33 @@ export default function Dashboard({
   // Reading location during render would be a hydration mismatch.
   const [route, setRoute] = React.useState<Route>(DEFAULT_ROUTE);
   const [showGuide, setShowGuide] = React.useState(false);
+
+  /**
+   * The dataset the Raw vs Clean inspector is showing.
+   *
+   * That switch is the inspector's own state and belongs there — it is not
+   * addressable, it changes several times a minute while someone reads a diff,
+   * and putting it in the hash would fill the back button with noise. But the
+   * assistant still needs to know which table is on screen, so the inspector
+   * reports it upward through a callback. The alternative (the chat panel
+   * querying the DOM for the highlighted button) would make grounding depend on
+   * markup, which is the failure mode this whole prop chain exists to avoid.
+   */
+  const [rawDataset, setRawDataset] = React.useState<string | null>(null);
+
+  /**
+   * The cell the reviewer has clicked in that inspector, or null.
+   *
+   * Reported upward by the same mechanism and for the same reason as the dataset
+   * above: it is the inspector's own state, it is not addressable, and the chat
+   * panel must not go looking for it in the DOM.
+   *
+   * `setRawCellSelection` is passed straight down as the callback. That is
+   * deliberate — a `useState` setter has a stable identity for the life of the
+   * component, so the effect in the inspector that reports the selection does
+   * not re-fire on every render of this shell.
+   */
+  const [rawCellSelection, setRawCellSelection] = React.useState<InspectorSelection | null>(null);
 
   React.useEffect(() => {
     const sync = () => setRoute(parseHash(window.location.hash));
@@ -132,6 +197,74 @@ export default function Dashboard({
   const goToCodes = React.useCallback(
     (codes: string[]) => navigate({ view: "defects", codeFilter: codes }),
     [navigate],
+  );
+
+  /**
+   * What the assistant is told about where the reviewer is.
+   *
+   * HOOK ORDER: this `useMemo` — like every hook in this component — sits above
+   * the single `return` below and above every conditional in the JSX. A hook
+   * after an early return runs on some renders and not others, which is React
+   * error #310 and shows up in production as a blank page reading "Application
+   * error: a client-side exception has occurred". This file has no early return
+   * and must not grow one above this line.
+   *
+   * The dataset comes from the hash when a permalink pinned one, otherwise from
+   * whatever the Raw vs Clean inspector last reported — and only while that view
+   * is the one on screen, because a stale dataset from a view nobody is looking
+   * at would be a confident lie about the reviewer's position.
+   */
+  const viewContext = React.useMemo(
+    () => ({
+      view: route.view,
+      defect: route.defect,
+      codeFilter: route.codeFilter,
+      dataset: route.dataset ?? (route.view === "raw" ? rawDataset : null),
+      metric: route.metric,
+      /**
+       * The clicked cell, as COORDINATES ONLY.
+       *
+       * Note what is NOT here: `rawCellSelection.codes`. This object is
+       * serialised verbatim into the POST body, so it carries the three fields
+       * the server can validate against `csv_diff.json` — dataset, row index,
+       * column — and nothing else. The server reads the row itself; the client
+       * never tells it what a cell contains. (`codes` is passed to the panel
+       * separately, below, and is used only to pick an offline answer.)
+       *
+       * Gated on the raw view being the one on screen, for the same reason
+       * `dataset` is: a coordinate from a table nobody is looking at would be a
+       * confident lie about where the reviewer is.
+       */
+      selection:
+        route.view === "raw" && rawCellSelection
+          ? {
+              dataset: rawCellSelection.dataset,
+              rowIndex: rawCellSelection.rowIndex,
+              column: rawCellSelection.column,
+            }
+          : null,
+    }),
+    [
+      route.view,
+      route.defect,
+      route.codeFilter,
+      route.dataset,
+      route.metric,
+      rawDataset,
+      rawCellSelection,
+    ],
+  );
+
+  /**
+   * The defect codes on the selected row. CLIENT-ONLY, and kept out of
+   * `viewContext` on purpose (see above) — its single job is to let the panel
+   * pick a useful scripted answer when no model is configured, so that clicking
+   * a cell and asking about it still names the defect class and its decision on
+   * a deployment with no API key.
+   */
+  const selectionCodes = React.useMemo(
+    () => (route.view === "raw" ? rawCellSelection?.codes ?? [] : []),
+    [route.view, rawCellSelection],
   );
 
   const mismatches = defects.filter((d) => d.coverage !== "match");
@@ -236,7 +369,7 @@ export default function Dashboard({
           />
         )}
 
-        {route.view === "profile" && <DataProfile bundle={bundle} />}
+        {route.view === "profile" && <DataProfile bundle={bundle} focusDataset={route.dataset} />}
 
         {route.view === "lineage" && (
           <Lineage bundle={bundle} defects={defects} onSelectCodes={goToCodes} />
@@ -244,21 +377,41 @@ export default function Dashboard({
 
         {route.view === "schema" && <SchemaView onSelectDefect={goToDefect} />}
 
-        {route.view === "analytics" && <Analytics bundle={bundle} />}
+        {route.view === "analytics" && <Analytics bundle={bundle} focusMetric={route.metric} />}
 
         {route.view === "tests" && <TestResults bundle={bundle} />}
 
-        {route.view === "raw" && <RawVsCleanInspector bundle={bundle} onSelectDefect={goToDefect} />}
+        {route.view === "raw" && (
+          <RawVsCleanInspector
+            bundle={bundle}
+            onSelectDefect={goToDefect}
+            onDatasetChange={setRawDataset}
+            onCellChange={setRawCellSelection}
+          />
+        )}
 
         {route.view === "assistant" && (
           <div className="mx-auto max-w-5xl">
-            <ChatAssistant bundle={bundle} defects={defects} onSelectDefect={goToDefect} forceOpen={true} />
+            <ChatAssistant
+              bundle={bundle}
+              defects={defects}
+              onSelectDefect={goToDefect}
+              viewContext={viewContext}
+              selectionCodes={selectionCodes}
+              forceOpen={true}
+            />
           </div>
         )}
       </main>
 
       {route.view !== "assistant" && (
-        <ChatAssistant bundle={bundle} defects={defects} onSelectDefect={goToDefect} />
+        <ChatAssistant
+          bundle={bundle}
+          defects={defects}
+          onSelectDefect={goToDefect}
+          viewContext={viewContext}
+          selectionCodes={selectionCodes}
+        />
       )}
 
       <InterviewerGuideModal isOpen={showGuide} onClose={() => setShowGuide(false)} />

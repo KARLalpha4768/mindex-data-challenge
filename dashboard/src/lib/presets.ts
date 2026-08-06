@@ -29,6 +29,7 @@
  * cases — a reviewer must always be able to tell which text a model produced.
  */
 
+import type { ViewContext } from "./chatContract";
 import {
   auditRecords,
   buildRunFacts,
@@ -441,6 +442,15 @@ export interface InterviewQuestion {
    * "Metric mom_growth_by_category".
    */
   scriptedHint: string;
+  /**
+   * Views this question is worth asking FROM.
+   *
+   * Additive and advisory: it changes the ORDER the chips are offered in on a
+   * given page, never the set. All ten stay reachable from every view, because a
+   * ranked list that hides its best question when you happen to be on the wrong
+   * tab is worse than no ranking at all.
+   */
+  views?: string[];
 }
 
 /** Ranked 1-10, verbatim from INTERVIEW_QA.md. */
@@ -452,6 +462,7 @@ export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
       "If I recomputed total_amount as quantity × unit_price, the data would be internally " +
       "consistent. Why is that wrong, and what would it cost?",
     scriptedHint: "TX-03",
+    views: ["overview", "defects", "analytics", "raw", "lineage"],
   },
   {
     rank: 2,
@@ -460,6 +471,7 @@ export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
       "P005 appears twice. Why isn't that a duplicate, and why does dim_product carry a price " +
       "no transaction ever rang at?",
     scriptedHint: "PR-02",
+    views: ["defects", "schema", "raw", "profile"],
   },
   {
     rank: 3,
@@ -468,12 +480,14 @@ export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
       "You report two return-rate denominators. Which stores breach 10% under each, and does " +
       "the choice change who gets flagged?",
     scriptedHint: "TX-10",
+    views: ["analytics", "defects", "tests"],
   },
   {
     rank: 4,
     chip: "June's 98% revenue collapse",
     question: "June 2026 shows a 98% revenue collapse. What happened to the business?",
     scriptedHint: "Metric mom_growth_by_category",
+    views: ["analytics", "overview"],
   },
   {
     rank: 5,
@@ -481,6 +495,7 @@ export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
     question:
       "Account for all 505 transaction rows. Where did the 31 that aren't in fact_sales go?",
     scriptedHint: "Run summary",
+    views: ["overview", "lineage", "tests", "raw"],
   },
   {
     rank: 6,
@@ -489,12 +504,14 @@ export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
       "Show me the line that decides a null customer_id is a guest rather than an error — and " +
       "why keep those rows?",
     scriptedHint: "TX-06",
+    views: ["defects", "schema", "raw"],
   },
   {
     rank: 7,
     chip: "Null region — why West, not East?",
     question: "Two stores had a null region. What did you impute, and why not \"East\"?",
     scriptedHint: "ST-03",
+    views: ["defects", "profile", "analytics", "raw"],
   },
   {
     rank: 8,
@@ -503,6 +520,7 @@ export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
       "S003's zip is 0938. You padded it to 00938, but that isn't a real New York zip. Why " +
       "present a wrong value?",
     scriptedHint: "ST-01",
+    views: ["defects", "profile", "raw"],
   },
   {
     rank: 9,
@@ -511,14 +529,168 @@ export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
       "Twenty dates were in three formats. How do you know they parsed correctly rather than " +
       "silently parsing wrong?",
     scriptedHint: "TX-01",
+    views: ["defects", "profile", "raw", "tests"],
   },
   {
     rank: 10,
     chip: "What can line_level_delta miss?",
     question: "What would make line_level_delta non-zero, and what can it not detect?",
     scriptedHint: "revenue_reconciliation",
+    views: ["analytics", "tests", "overview", "schema"],
   },
 ];
+
+/* ────────────────────────────────────────────────────────────────────────── *
+ * Page-specific prompts
+ *
+ * The ten ranked questions are about the SUBMISSION. These are about the SCREEN
+ * — "what does this chart show", "why do three stores breach the threshold" —
+ * and they exist because that is what a reviewer actually types at a dashboard,
+ * and because a question the assistant is known to answer well is worth
+ * offering. They are ordinary questions asked through the ordinary path; there
+ * is nothing canned about the answer.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export interface PagePrompt {
+  /** Short chip text. */
+  chip: string;
+  /** What is actually asked. */
+  question: string;
+  /** Offline target, resolved exactly as an interview chip's hint is. */
+  scriptedHint?: string;
+}
+
+/** Two or three per view. Static: nothing here depends on the bundle. */
+export const PAGE_PROMPTS: Record<string, PagePrompt[]> = {
+  overview: [
+    { chip: "Explain this page", question: "Explain what this Overview page is showing me.", scriptedHint: "Run summary" },
+    { chip: "Where did the rows go?", question: "Walk me through the row budget on this page: what came in, what came out, and what was quarantined.", scriptedHint: "Run summary" },
+  ],
+  defects: [
+    { chip: "Explain this page", question: "Explain what the Defect Explorer is showing me and how to read one dossier." },
+    { chip: "Which are worst?", question: "Which of the defect classes listed here are the most severe, and what was done about them?" },
+  ],
+  profile: [
+    { chip: "Explain this page", question: "Explain what this profiling table is showing me and when it was taken." },
+    { chip: "Which columns look wrong?", question: "Looking at this profile, which columns have nulls or suspicious dtypes, and which defect class does each one point at?" },
+  ],
+  lineage: [
+    { chip: "Explain this page", question: "Explain the pipeline stages on this page and which defect codes each stage owns." },
+    { chip: "Where is a code handled?", question: "For a given defect code, which stage on this map handles it, and in which module?" },
+  ],
+  schema: [
+    { chip: "Explain this page", question: "Explain this star schema: the grain of each table and why the keys are designed this way." },
+    { chip: "Why these constraints?", question: "Which constraints on this schema would fail loudly if the data were dirty, and what would that catch?" },
+  ],
+  analytics: [
+    { chip: "What does this chart show?", question: "Explain what the charts and metrics on this Analytics page are showing me." },
+    { chip: "Why do stores breach 10%?", question: "Why do several stores breach the 10% return-rate threshold, and does the choice of denominator change which ones?", scriptedHint: "TX-10" },
+    { chip: "Which figures are controls?", question: "Which numbers on this page are controls rather than findings, and what would make them non-zero?", scriptedHint: "revenue_reconciliation" },
+  ],
+  tests: [
+    { chip: "Explain this page", question: "Explain what this validation page proves and what it does not prove." },
+    { chip: "How is coverage checked?", question: "How is defect coverage reconciled here — expected against detected — and what happens on a mismatch?" },
+  ],
+  raw: [
+    { chip: "Explain this page", question: "Explain what this raw-versus-clean comparison is showing me and how to read a highlighted cell." },
+    { chip: "Which defects are here?", question: "Which defect classes are visible in the dataset I am inspecting, and what did the pipeline do to each?" },
+  ],
+  assistant: [
+    { chip: "What can you answer?", question: "What material are you grounded on, and what kinds of question can you answer from it?", scriptedHint: "Run summary" },
+  ],
+};
+
+/**
+ * The prompts to offer on the current page, focus-aware.
+ *
+ * The focus-derived prompts come first because they are the most specific thing
+ * that can be asked: a reviewer with TX-03 open and a chip that says "why was
+ * TX-03 handled this way" is being offered their own question back.
+ */
+export function pagePromptsFor(
+  view: ViewContext | null | undefined,
+  /**
+   * Defect codes on the row the reviewer clicked, when there is one.
+   *
+   * CLIENT-ONLY and never sent to the server — `viewContext.selection` carries
+   * coordinates, and the server resolves the codes itself out of
+   * `csv_diff.json`. They are needed HERE for one thing: pointing the offline
+   * (no-API-key) path at the right scripted dossier, so that a deployment with
+   * no key still answers "why is this cell flagged?" by naming the class and the
+   * decision rather than falling back to the run summary.
+   */
+  selectionCodes: readonly string[] = [],
+): PagePrompt[] {
+  if (!view) return [];
+  const focused: PagePrompt[] = [];
+
+  /* The clicked cell first: it is the most specific thing on the screen, and
+   * these two questions are the ones the inspector visibly invites. They are
+   * ordinary questions asked through the ordinary path — the server sees the
+   * selection on the request and retrieves the row for them, exactly as it would
+   * if the reviewer typed the same words. */
+  if (view.selection) {
+    const hint = selectionCodes[0];
+    focused.push({
+      chip: "Why is this cell flagged?",
+      question:
+        "Why is the cell I have selected in the raw-versus-clean inspector flagged? Name the " +
+        "defect class, what the pipeline did to that value and why it took that decision.",
+      ...(hint ? { scriptedHint: hint } : {}),
+    });
+    focused.push({
+      chip: "What is wrong with this row?",
+      question:
+        "What is wrong with the row I have selected, across all of its columns? For each " +
+        "defective cell, give the raw value, the cleaned value and the decision that produced it.",
+      ...(hint ? { scriptedHint: hint } : {}),
+    });
+  }
+
+  if (view.defect) {
+    focused.push({
+      chip: `Why ${view.defect} this way?`,
+      question:
+        `${view.defect} is the defect open on this page. Why was it handled the way it was, ` +
+        "and what would the alternative have cost?",
+      scriptedHint: view.defect,
+    });
+  }
+  if (view.metric) {
+    focused.push({
+      chip: `What does ${view.metric} show?`,
+      question:
+        `Explain the ${view.metric} metric shown on this page: its definition, its ` +
+        "numerator and denominator, and what its rows say.",
+      scriptedHint: `Metric ${view.metric}`,
+    });
+  }
+  if (view.dataset) {
+    focused.push({
+      chip: `Defects in ${view.dataset}`,
+      question:
+        `Which defect classes were seeded into the ${view.dataset} dataset I am looking at, ` +
+        "and what did the pipeline do to each?",
+    });
+  }
+
+  return [...focused, ...(PAGE_PROMPTS[view.view] ?? [])];
+}
+
+/**
+ * The ten ranked questions, reordered so the ones that belong to this page come
+ * first. Stable within each group, so the ranking is still visible — this is a
+ * partition, not a re-ranking, and the full list is still exactly ten items.
+ */
+export function rankQuestionsForView(
+  view: ViewContext | null | undefined,
+  questions: readonly InterviewQuestion[] = INTERVIEW_QUESTIONS,
+): InterviewQuestion[] {
+  if (!view) return [...questions];
+  const relevant = questions.filter((q) => q.views?.includes(view.view));
+  const rest = questions.filter((q) => !q.views?.includes(view.view));
+  return [...relevant, ...rest];
+}
 
 /**
  * Offline resolution for an interview chip.
@@ -531,16 +703,65 @@ export const INTERVIEW_QUESTIONS: readonly InterviewQuestion[] = [
  */
 export function resolveInterviewAnswer(
   answers: ScriptedAnswer[],
-  item: InterviewQuestion,
+  /* Structural rather than `InterviewQuestion`, so the page-specific prompts —
+   * which carry the same two fields and no rank — resolve through exactly this
+   * code path instead of a second, parallel one. */
+  item: { question: string; scriptedHint?: string },
+  view: ViewContext | null = null,
 ): ScriptedAnswer {
   const hint = item.scriptedHint;
-  const byLabel = answers.find((a) => a.label === hint || a.label.startsWith(hint));
-  if (byLabel) return byLabel;
-  const byCode = answers.find((a) => a.defectCode === hint);
-  if (byCode) return byCode;
-  const byMetric = answers.find((a) => a.label === `Metric ${hint}`);
-  if (byMetric) return byMetric;
-  return findScriptedAnswer(answers, item.question);
+  if (hint) {
+    const byLabel = answers.find((a) => a.label === hint || a.label.startsWith(hint));
+    if (byLabel) return byLabel;
+    const byCode = answers.find((a) => a.defectCode === hint);
+    if (byCode) return byCode;
+    const byMetric = answers.find((a) => a.label === `Metric ${hint}`);
+    if (byMetric) return byMetric;
+  }
+  return findScriptedAnswer(answers, item.question, view);
+}
+
+/**
+ * How much a scripted answer gains for belonging to the page the reviewer is on.
+ *
+ * A term match is worth 1 in this matcher, and its terms are every word of four
+ * characters or more — so "explain this" scores 1 against any answer that
+ * happens to contain the word "this". A bonus of 2 is what it takes to beat that
+ * class of noise: the defect open on screen wins over an unrelated dossier that
+ * shares one incidental word, and loses to an answer that genuinely shares three
+ * words with the question. Same principle as the server-side `VIEW_BOOST`, at
+ * this matcher's much coarser scale — the page is a hint about the subject,
+ * never a filter on it, and a question naming a defect code still short-circuits
+ * everything below.
+ */
+const SCRIPTED_VIEW_BONUS = 2;
+
+/** The scripted answers this view is about, by label — used for the bonus and the floor. */
+function viewPreferredLabels(
+  answers: ScriptedAnswer[],
+  view: ViewContext | null | undefined,
+): Set<string> {
+  const labels = new Set<string>();
+  if (!view) return labels;
+
+  const addByCode = (code: string) => {
+    for (const a of answers) if (a.defectCode === code) labels.add(a.label);
+  };
+
+  if (view.defect) addByCode(view.defect);
+  for (const code of view.codeFilter ?? []) addByCode(code);
+  if (view.metric) {
+    for (const a of answers) if (a.label === `Metric ${view.metric}`) labels.add(a.label);
+  }
+  if (view.view === "analytics") {
+    for (const a of answers) if (a.label.startsWith("Metric ")) labels.add(a.label);
+  }
+  if (view.view === "overview" || view.view === "tests" || view.view === "lineage") {
+    // The run summary IS the material for these pages: coverage, the row budget
+    // and the reconciliation are what they show.
+    labels.add(answers[0]?.label ?? "");
+  }
+  return labels;
 }
 
 /**
@@ -550,10 +771,16 @@ export function resolveInterviewAnswer(
  * defect code wins outright, otherwise term overlap decides, and the run
  * summary is the floor. It never returns nothing, because "no match" and a
  * silent panel are the same experience to a reviewer.
+ *
+ * `view` is optional and additive. When the API is unavailable the panel still
+ * knows which page it is on, and a scripted answer about the page beats a
+ * scripted answer about something else — but a question that names a defect
+ * code still wins outright, exactly as on the live path.
  */
 export function findScriptedAnswer(
   answers: ScriptedAnswer[],
   question: string,
+  view: ViewContext | null = null,
 ): ScriptedAnswer {
   const q = question.toLowerCase();
 
@@ -567,19 +794,40 @@ export function findScriptedAnswer(
     new Set(q.split(/[^a-z0-9_]+/).filter((t) => t.length >= 4)),
   );
 
+  const preferred = viewPreferredLabels(answers, view);
+
   let best: ScriptedAnswer | null = null;
   let bestScore = 0;
   for (const answer of answers) {
     const haystack = `${answer.label} ${answer.question} ${answer.keywords.join(" ")}`.toLowerCase();
     let score = 0;
     for (const term of terms) if (haystack.includes(term)) score += 1;
+    // Unconditional, not gated on the answer having matched a term: the whole
+    // point is that "explain this" matches nothing on the page and everything
+    // elsewhere. Ties keep the earlier answer, which is catalog order.
+    if (preferred.has(answer.label)) score += SCRIPTED_VIEW_BONUS;
     if (score > bestScore) {
       bestScore = score;
       best = answer;
     }
   }
+  if (bestScore > 0 && best) return best;
+
+  /* Nothing matched. Before falling back to the run summary, offer the material
+   * for the page the reviewer is on: with TX-03 open, "explain this" should
+   * produce TX-03, not a run summary that mentions it in passing. */
+  if (view) {
+    const focusLabel =
+      (view.defect && answers.find((a) => a.defectCode === view.defect)?.label) ||
+      (view.metric && answers.find((a) => a.label === `Metric ${view.metric}`)?.label) ||
+      "";
+    if (focusLabel) {
+      const hit = answers.find((a) => a.label === focusLabel);
+      if (hit) return hit;
+    }
+  }
 
   // Index 0 is always the run summary; it is the honest "here is what I do
   // have" response rather than a guess at what was asked.
-  return bestScore > 0 && best ? best : answers[0];
+  return answers[0];
 }

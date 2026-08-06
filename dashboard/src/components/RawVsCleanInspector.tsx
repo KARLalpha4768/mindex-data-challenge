@@ -2,20 +2,40 @@
 
 import React from "react";
 import { Badge } from "@/components/ui";
-import type { Bundle } from "@/lib/types";
+import type { Bundle, CsvDiffCell, CsvDiffRow, DatasetName } from "@/lib/types";
 
-interface CellInfo {
-  raw_value: string;
-  clean_value: string;
-  status: "clean" | "error" | "fixed";
-  defect_code: string | null;
-  explanation: string | null;
-}
+/* The diff shapes now live in `types.ts`, shared with the server-side loader
+ * (`csvDiff.ts`) and the prompt builder (`grounding.ts`). They used to be
+ * declared privately here; once the assistant began resolving a clicked cell out
+ * of the same file, three private copies of one shape became three ways for the
+ * two ends to stop agreeing about it. Aliased rather than renamed at every use
+ * site so the diff stays readable. */
+type CellInfo = CsvDiffCell;
+type RowData = CsvDiffRow;
 
-interface RowData {
-  row_id: string;
-  defects: string[];
-  cells: Record<string, CellInfo>;
+/**
+ * What this view reports upward when a cell is clicked.
+ *
+ * COORDINATES, not content — `dataset`, `rowIndex`, `column` are exactly what
+ * travels to `/api/chat`, which then resolves the row itself out of the same
+ * `csv_diff.json` this component fetched. The reasoning is written out in
+ * `chatContract.ts` under `CellSelection`: anything the browser posts is
+ * attacker-controlled text that would land inside the model's prompt, and cell
+ * values are not worth opening that channel for when the server already holds
+ * the file.
+ *
+ * `codes` is the exception that proves it: it is CLIENT-ONLY. `Dashboard` keeps
+ * it out of the `viewContext` it posts and uses it for one thing — picking which
+ * scripted answer the offline (no-API-key) path should give for this cell. It
+ * never crosses the wire.
+ */
+export interface InspectorSelection {
+  dataset: DatasetName;
+  /** Index into the dataset's source `rows` array. Unique; `row_id` is not. */
+  rowIndex: number;
+  column: string;
+  /** Defect codes recorded on this row. Client-only — see above. */
+  codes: string[];
 }
 
 /** A `RowData` carrying the unique render key assigned at load time. */
@@ -38,6 +58,31 @@ interface CsvDiffData {
 interface Props {
   bundle: Bundle;
   onSelectDefect?: (code: string) => void;
+  /**
+   * Report the dataset currently being inspected upward, so the grounded
+   * assistant can be told which table is on screen.
+   *
+   * Optional, and the component behaves identically without it. The dataset
+   * stays local state — it is not addressable and changes too often to belong
+   * in the URL — but "which table am I looking at" is exactly what a question
+   * like "why is this cell red?" depends on, and the alternative to reporting
+   * it is the chat panel scraping the DOM for the highlighted button.
+   */
+  onDatasetChange?: (dataset: string) => void;
+  /**
+   * Report the clicked cell upward, so the grounded assistant can answer "why is
+   * this cell red?" about the cell that is actually selected.
+   *
+   * `null` when the selection is cleared — closing the detail card, or switching
+   * dataset, both of which must clear it: a coordinate that points into a table
+   * nobody is looking at is worse than no coordinate at all.
+   *
+   * Optional, and this component behaves identically without it. Same contract
+   * as `onDatasetChange` above and for the same reason: the alternative is the
+   * chat panel reading this component's DOM for a highlighted cell, which would
+   * make grounding depend on markup.
+   */
+  onCellChange?: (selection: InspectorSelection | null) => void;
 }
 
 /* ── Sorting ────────────────────────────────────────────────────────────────
@@ -181,15 +226,42 @@ function SortableHeader({
   );
 }
 
-export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
+export default function RawVsCleanInspector({
+  bundle,
+  onSelectDefect,
+  onDatasetChange,
+  onCellChange,
+}: Props) {
   const [data, setData] = React.useState<CsvDiffData | null>(null);
   const [dataset, setDataset] = React.useState<"transactions" | "products" | "stores">("transactions");
   const [viewMode, setViewMode] = React.useState<"split" | "raw" | "clean">("split");
   const [selectedCode, setSelectedCode] = React.useState<string>("all");
+  /**
+   * The clicked cell.
+   *
+   * `rowIndex` (the row's position in the SOURCE array, i.e. `uid`) is carried
+   * alongside `row_id` because the two are not interchangeable: `row_id` is the
+   * transaction id and the 15 TX-09 rows share one, so it cannot address a row.
+   * `rowIndex` is what the assistant is told, and what the server looks up.
+   */
   const [activeCell, setActiveCell] = React.useState<{
+    /**
+     * The dataset this coordinate belongs to, captured at click time.
+     *
+     * Carried on the selection rather than read from `dataset` when reporting,
+     * because the two can disagree for exactly one render: switching dataset
+     * changes `dataset` immediately and clears `activeCell` in an effect, so a
+     * reporter reading both would emit `(new dataset, old row index)` once — a
+     * coordinate that is well-formed, resolvable, and points at the wrong row.
+     */
+    dataset: DatasetName;
+    uid: string;
+    rowIndex: number;
     row_id: string;
     col: string;
     info: CellInfo;
+    /** Defect codes on the whole row, for the offline answer picker. */
+    codes: string[];
   } | null>(null);
 
   const [sort, setSort] = React.useState<SortState | null>(null);
@@ -210,18 +282,30 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
     });
   }, []);
 
-  const handleCellClick = (uid: string, row_id: string, col: string, info: CellInfo) => {
-    setActiveCell({ row_id, col, info });
+  const handleCellClick = (row: KeyedRow, col: string, info: CellInfo) => {
+    setActiveCell({
+      dataset,
+      uid: row.uid,
+      rowIndex: Number(row.uid),
+      row_id: row.row_id,
+      col,
+      info,
+      codes: row.defects ?? [],
+    });
 
     // Set flashing cell state for 15 seconds
-    setFlashingCell({ uid, col });
+    setFlashingCell({ uid: row.uid, col });
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     flashTimerRef.current = setTimeout(() => {
       setFlashingCell(null);
     }, 15000);
 
-    // Auto-scroll the clean table to bring corresponding row into view
-    const targetRowEl = cleanRowRefs.current[row_id];
+    // Auto-scroll the clean table to bring the corresponding row into view.
+    // Keyed by `uid`: the ref map is written with `uid` (see the clean table's
+    // `ref` callback), and this lookup used `row_id`, which is not unique and is
+    // not what the map holds — so it silently found nothing for every row and
+    // the wrong row for none. Same bug class as the React `key` fixed above.
+    const targetRowEl = cleanRowRefs.current[row.uid];
     if (targetRowEl) {
       targetRowEl.scrollIntoView({ behavior: "smooth", block: "center" });
     }
@@ -236,9 +320,59 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
   // Changing dataset changes the columns, so a sort keyed to a column that no
   // longer exists would silently do nothing. Reset rather than leave a stale
   // indicator pointing at a header that is gone.
+  //
+  // The selected cell goes with it, and that one is not cosmetic: a selection is
+  // `(dataset, rowIndex, column)`, so keeping it across a dataset switch would
+  // leave the detail card describing a row of the previous table and would send
+  // the assistant a coordinate that now addresses a different row entirely.
   React.useEffect(() => {
     setSort(null);
+    setActiveCell(null);
   }, [dataset]);
+
+  /**
+   * Tell the shell which cell is selected, as coordinates.
+   *
+   * HOOK ORDER: with the other effects, ABOVE the `if (!currentDataset) return`
+   * below. Every hook in this component must stay above that early return — a
+   * hook below it runs on some renders and not others, which is React error #310
+   * and has twice taken the deployed site down.
+   *
+   * `dataset` is a dependency as well as `activeCell` because the selection is
+   * only meaningful as a pair, and the mismatch between them — for the one
+   * render between "dataset changed" and "the effect above cleared the cell" —
+   * is reported as NO selection rather than as a coordinate that resolves to the
+   * wrong row of the new table.
+   */
+  React.useEffect(() => {
+    if (!onCellChange) return;
+    const current = activeCell && activeCell.dataset === dataset ? activeCell : null;
+    onCellChange(
+      current
+        ? {
+            dataset: current.dataset,
+            rowIndex: current.rowIndex,
+            column: current.col,
+            codes: current.codes,
+          }
+        : null,
+    );
+  }, [activeCell, dataset, onCellChange]);
+
+  /**
+   * Tell the shell which dataset is on screen, including on first mount so the
+   * assistant is correct before anything is clicked.
+   *
+   * HOOK ORDER: this sits with the other effects, ABOVE the `if
+   * (!currentDataset) return` further down. Every hook in this component must
+   * stay above that early return — a hook below it runs on some renders and not
+   * others, which is React error #310 and takes the deployed page down with a
+   * client-side exception. The callback is memoised by the parent, so this fires
+   * only when the dataset actually changes.
+   */
+  React.useEffect(() => {
+    onDatasetChange?.(dataset);
+  }, [dataset, onDatasetChange]);
 
   React.useEffect(() => {
     fetch("/data/csv_diff.json")
@@ -377,6 +511,14 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
               <span className="font-mono text-xs font-bold text-ink">
                 Row: {activeCell.row_id} · Column: {activeCell.col}
               </span>
+              {/* The source-file row number. `row_id` is not unique (the 15
+                  TX-09 rows share one), so this is the only thing that
+                  identifies WHICH row — and it is exactly the coordinate the
+                  assistant is given, so the two can be checked against each
+                  other on screen. */}
+              <span className="font-mono text-2xs text-ink-faint">
+                source row {activeCell.rowIndex + 1}
+              </span>
             </div>
             <button
               type="button"
@@ -413,6 +555,21 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
           <p className="mt-3 text-xs text-ink-dim leading-relaxed">
             {activeCell.info.explanation || "Standardized by cleaning rules."}
           </p>
+
+          {/* Discoverability. A reviewer has no way to guess that clicking a cell
+              also told the assistant about it, and an affordance nobody knows
+              exists is the same as one that does not. Only rendered when the
+              shell is actually listening (`onCellChange` present), so the card
+              never claims something that is not happening. */}
+          {onCellChange && (
+            <p className="mt-2 rounded border border-accent/30 bg-accent/5 px-2.5 py-1.5 text-2xs text-ink-dim">
+              <span className="font-semibold text-accent">The assistant knows about this cell.</span>{" "}
+              Open it and ask <span className="italic">&ldquo;why is this cell flagged?&rdquo;</span> —
+              it is sent the coordinates ({activeCell.dataset}, row {activeCell.rowIndex + 1},{" "}
+              {activeCell.col}) and reads the whole row back off the pipeline&apos;s own diff file
+              on the server.
+            </p>
+          )}
 
           {activeCell.info.defect_code && onSelectDefect && (
             <div className="mt-3 flex justify-end">
@@ -463,7 +620,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
                         return (
                           <td
                             key={h}
-                            onClick={() => isErr && handleCellClick(r.uid, r.row_id, h, cell)}
+                            onClick={() => isErr && handleCellClick(r, h, cell as CellInfo)}
                             className={`p-2 border-r border-line/50 transition-colors ${
                               isErr
                                 ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
@@ -529,7 +686,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
                         return (
                           <td
                             key={h}
-                            onClick={() => isFixed && handleCellClick(r.uid, r.row_id, h, cell)}
+                            onClick={() => isFixed && handleCellClick(r, h, cell as CellInfo)}
                             className={`p-2 border-r border-line/50 transition-all duration-300 ${
                               isFlashing
                                 ? "bg-green-500/40 text-green-100 font-bold ring-4 ring-green-400 animate-pulse shadow-xl shadow-green-500/50 z-10"

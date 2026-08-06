@@ -43,7 +43,25 @@ const METRIC_ORDER = [
   "top_customers_lifetime",
 ];
 
-export default function Analytics({ bundle }: { bundle: Bundle }) {
+/**
+ * `focusMetric` is the metric id from the hash (`#analytics/metric:aov_by_region`).
+ *
+ * It reorders nothing and hides nothing — the page is the same page. What it
+ * does is mark one card as the one in view and hand the same id to the grounded
+ * assistant, so "what does this chart show?" has a referent. The card headings
+ * are permalinks to their own metric, which is how the value gets set without a
+ * new control.
+ *
+ * HOOK ORDER: `ids` is memoised above the empty-metrics early return, and must
+ * stay there. A hook below a conditional return is React error #310.
+ */
+export default function Analytics({
+  bundle,
+  focusMetric = null,
+}: {
+  bundle: Bundle;
+  focusMetric?: string | null;
+}) {
   const metrics = bundle.analytics?.metrics ?? {};
   const ids = React.useMemo(() => {
     const known = METRIC_ORDER.filter((id) => id in metrics);
@@ -103,13 +121,21 @@ export default function Analytics({ bundle }: { bundle: Bundle }) {
       </section>
 
       {ids.map((id) => (
-        <MetricCard key={id} id={id} metric={metrics[id]} />
+        <MetricCard key={id} id={id} metric={metrics[id]} inFocus={id === focusMetric} />
       ))}
     </div>
   );
 }
 
-function MetricCard({ id, metric }: { id: string; metric: Metric }) {
+function MetricCard({
+  id,
+  metric,
+  inFocus = false,
+}: {
+  id: string;
+  metric: Metric;
+  inFocus?: boolean;
+}) {
   const columns = React.useMemo(() => {
     // Column order follows the first row's key order — the SQL SELECT list
     // order, which is the order the query author chose deliberately.
@@ -121,14 +147,27 @@ function MetricCard({ id, metric }: { id: string; metric: Metric }) {
   }, [metric.rows]);
 
   return (
-    <section aria-labelledby={`metric-${id}`} className="panel overflow-hidden">
+    <section
+      aria-labelledby={`metric-${id}`}
+      aria-current={inFocus ? "true" : undefined}
+      className={`panel overflow-hidden${inFocus ? " ring-1 ring-accent/60" : ""}`}
+    >
       <header className="border-b border-line px-5 py-4">
         <div className="flex flex-wrap items-center gap-2">
           <h3 id={`metric-${id}`} className="text-sm font-semibold text-ink">
-            {metric.title}
+            {/* Permalink to this card. Following it also tells the assistant
+                which metric is in view — see Dashboard.tsx. */}
+            <a
+              href={`#analytics/metric:${id}`}
+              className={inFocus ? "text-accent" : "hover:text-accent hover:underline"}
+              title={`Focus ${id} (and tell the assistant this is the metric in view)`}
+            >
+              {metric.title}
+            </a>
           </h3>
           <Badge tone="mono">{id}</Badge>
           <Badge tone="neutral">{formatInt(metric.rows.length)} rows</Badge>
+          {inFocus && <Badge tone="accent">in focus</Badge>}
         </div>
         <p className="mt-1.5 text-sm text-ink-dim">{metric.description}</p>
 

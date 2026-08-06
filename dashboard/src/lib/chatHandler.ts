@@ -111,6 +111,7 @@
  */
 
 import { loadBundle } from "./bundle";
+import { loadCsvDiff } from "./csvDiff";
 import {
   MAX_BODY_BYTES,
   MAX_HISTORY_TURNS,
@@ -125,10 +126,10 @@ import {
   type ModelAttempt,
   type ModelResolution,
 } from "./chatContract";
-import { SYSTEM_INSTRUCTION, selectContext } from "./grounding";
+import { SYSTEM_INSTRUCTION, normaliseViewContext, selectContext } from "./grounding";
 import { auditAgainstContext } from "./numericAudit";
 import { clientKeyFrom, rateLimit } from "./rateLimit";
-import type { Bundle } from "./types";
+import type { Bundle, CsvDiff } from "./types";
 
 /* ── The model preference chain ───────────────────────────────────────────
  *
@@ -345,6 +346,22 @@ export interface ChatDeps {
   getApiKey: () => string | undefined;
   /** Returns the parsed bundle, or null when it cannot be read. */
   getBundle: () => Bundle | null;
+  /**
+   * Returns `public/data/csv_diff.json`, or null when it cannot be read.
+   *
+   * Used for ONE thing: turning the `{ dataset, rowIndex, column }` coordinates
+   * a reviewer's click produces into the actual row, server-side, so that no
+   * client-supplied cell content ever reaches the prompt (see `CellSelection` in
+   * `chatContract.ts`).
+   *
+   * OPTIONAL, like `sleep` and `random` above and for the same reason: the
+   * existing test fixtures construct this interface as an object literal, and a
+   * new required field would break every one of them to add a capability none of
+   * them exercise. Absent means "no diff file" — selections resolve to nothing
+   * and the answer is grounded on everything else, which is exactly the
+   * behaviour of a deployment whose diff artefact was never generated.
+   */
+  getCsvDiff?: () => CsvDiff | null;
   fetchImpl: typeof fetch;
   /** Disable to make tests deterministic without touching module state. */
   rateLimitEnabled: boolean;
@@ -379,9 +396,32 @@ function readBundleOnce(): Bundle | null {
   return cachedBundle;
 }
 
+/* ── Cell-diff cache ──────────────────────────────────────────────────────
+ * Same policy as the bundle above, for the same reasons: ~992 KB of JSON, a
+ * build artefact that cannot change without a redeploy, parsed once per warm
+ * instance. `undefined` means "not yet attempted"; `null` means "attempted and
+ * unavailable", which is a state worth caching — a deployment missing the file
+ * must not re-stat it on every question to re-learn that it is still missing.
+ */
+let cachedCsvDiff: CsvDiff | null | undefined;
+
+function readCsvDiffOnce(): CsvDiff | null {
+  if (cachedCsvDiff !== undefined) return cachedCsvDiff;
+  // `loadCsvDiff` never throws — a missing or malformed file returns null — but
+  // the try/catch mirrors `readBundleOnce` so that the failure posture of the
+  // two artefacts is identical however either loader changes.
+  try {
+    cachedCsvDiff = loadCsvDiff();
+  } catch {
+    cachedCsvDiff = null;
+  }
+  return cachedCsvDiff;
+}
+
 export const defaultDeps: ChatDeps = {
   getApiKey: () => process.env.GEMINI_API_KEY,
   getBundle: readBundleOnce,
+  getCsvDiff: readCsvDiffOnce,
   fetchImpl: (...args) => fetch(...args),
   rateLimitEnabled: true,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -1944,7 +1984,11 @@ export async function handleChatPost(
     return fail("bad_request", "Request body is not valid JSON.");
   }
 
-  const body = (parsed ?? {}) as { question?: unknown; history?: unknown };
+  const body = (parsed ?? {}) as {
+    question?: unknown;
+    history?: unknown;
+    viewContext?: unknown;
+  };
   const question = typeof body.question === "string" ? body.question.trim() : "";
   if (!question) return fail("bad_request", "Field `question` is required.");
   if (question.length > MAX_QUESTION_CHARS) {
@@ -1964,6 +2008,16 @@ export async function handleChatPost(
     )
     .slice(-MAX_HISTORY_TURNS)
     .map((t) => ({ role: t.role, text: t.text.slice(0, MAX_TURN_CHARS) }));
+
+  /* 2b. The page the reviewer is looking at. Optional, additive, and validated
+   *     rather than trusted: `normaliseViewContext` accepts only a known view id,
+   *     catalog-shaped defect codes and `[a-z0-9_]` identifiers, and returns null
+   *     for anything else. That matters because these values are interpolated
+   *     into the prompt preamble — free text here would be an unauthenticated
+   *     channel into the model's instructions. A request that omits the field, or
+   *     sends a shape this build does not recognise, is NOT an error: retrieval
+   *     falls back to exactly what it did before view awareness existed. */
+  const viewContext = normaliseViewContext(body.viewContext);
 
   /* 3. Rate limit. After validation (so a malformed request does not consume
    *    somebody's allowance) and before the key check (so probing whether a
@@ -1998,8 +2052,18 @@ export async function handleChatPost(
     );
   }
 
-  /* 5. Retrieval. The whole point: a bounded, verbatim slice of the bundle. */
-  const context = selectContext(bundle, question);
+  /* 5. Retrieval. The whole point: a bounded, verbatim slice of the bundle.
+   *
+   *    `csvDiff` is passed alongside it so that a `viewContext.selection` — the
+   *    cell a reviewer clicked in the Raw vs Clean inspector — can be resolved
+   *    HERE, from a file the server already trusts, rather than being sent as
+   *    content by the browser. The diff file being absent is not an error: the
+   *    selection then resolves to nothing and the question is answered from
+   *    everything else, exactly as it was before cell awareness existed. */
+  const context = selectContext(bundle, question, {
+    viewContext,
+    csvDiff: deps.getCsvDiff?.() ?? null,
+  });
 
   const userTurn =
     `CONTEXT (verbatim excerpts from the pipeline bundle — the only source you may use):\n` +
@@ -2089,6 +2153,10 @@ export async function handleChatPost(
       droppedIds: context.droppedIds,
       mentionedCodes: context.mentionedCodes,
       aliasPhrases: context.aliasPhrases,
+      // Empty when the request carried no recognised view. Echoed rather than
+      // inferred by the client, so the panel reports what the SERVER used —
+      // "the assistant knew I was on Analytics" is a claim about the server.
+      ...(context.viewNote ? { viewNote: context.viewNote } : {}),
     },
     audit,
     resolution: outcome.resolution,

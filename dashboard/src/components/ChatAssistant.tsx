@@ -73,15 +73,20 @@ import {
   type ChatTransport,
   type ModelResolution,
   type NumericAudit,
+  type ViewContext,
 } from "@/lib/chatContract";
+import { VIEWS } from "@/lib/config";
 import { auditAnswer, indexBundleNumbers } from "@/lib/numericAudit";
 import {
   INTERVIEW_QUESTIONS,
   buildScriptedAnswers,
   findScriptedAnswer,
+  pagePromptsFor,
+  rankQuestionsForView,
   resolveInterviewAnswer,
   type CodeAnnotation,
   type InterviewQuestion,
+  type PagePrompt,
   type ScriptedAnswer,
 } from "@/lib/presets";
 import type { Bundle, DefectView } from "@/lib/types";
@@ -414,9 +419,52 @@ interface Props {
   defects: DefectView[];
   onSelectDefect?: (code: string) => void;
   forceOpen?: boolean;
+  /**
+   * What the reviewer is looking at, owned by `Dashboard.tsx` and passed down.
+   *
+   * WHY A PROP AND NOT `window.location.hash`. The shell already parses the hash
+   * into route state; parsing it a second time in here would be a second parser
+   * to keep in step, and it still would not know the dataset the Raw vs Clean
+   * inspector is showing — that lives in component state and is reported upward.
+   * Reading the DOM for the active tab would be worse again: grounding would
+   * then depend on markup, and a class rename would silently change what the
+   * model is told with nothing to catch it.
+   *
+   * Optional throughout: with no `viewContext` the panel behaves exactly as it
+   * did before it was page-aware, which is also what an older client does.
+   */
+  viewContext?: ViewContext;
+  /**
+   * Defect codes on the row the reviewer clicked in the Raw vs Clean inspector.
+   *
+   * CLIENT-ONLY. It is deliberately NOT part of `viewContext`, because
+   * `viewContext` is serialised straight into the POST body and the whole design
+   * of the cell feature is that the browser sends coordinates while the SERVER
+   * resolves the content (see `CellSelection` in `chatContract.ts`). These codes
+   * exist for one job on this side of the wire: choosing which scripted answer
+   * the offline path gives, so that a deployment with no API key still answers a
+   * question about a clicked cell by naming its defect class and decision.
+   */
+  selectionCodes?: readonly string[];
 }
 
-export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOpen = false }: Props) {
+/**
+ * Stable empty default for `selectionCodes`.
+ *
+ * A `= []` in the destructuring would allocate a new array on every render, and
+ * the memo below has it as a dependency — which would recompute (and, worse,
+ * hand a new object to anything downstream) on every keystroke in the input box.
+ */
+const NO_SELECTION_CODES: readonly string[] = [];
+
+export default function ChatAssistant({
+  bundle,
+  defects,
+  onSelectDefect,
+  forceOpen = false,
+  viewContext,
+  selectionCodes = NO_SELECTION_CODES,
+}: Props) {
   const [isOpen, setIsOpen] = React.useState(forceOpen);
   const [inputQuery, setInputQuery] = React.useState("");
   const [mode, setMode] = React.useState<Mode>("checking");
@@ -466,6 +514,85 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOp
   const knownCodes = React.useMemo(
     () => new Set(defects.map((d) => d.code.toUpperCase())),
     [defects],
+  );
+
+  /* ── Page awareness ──────────────────────────────────────────────────────
+   *
+   * HOOK ORDER: these three memos sit with the memos above, before every
+   * conditional in this component and before the single `return`. React error
+   * #310 — "Rendered more hooks than during the previous render" — is what a
+   * hook placed after an early return produces, and on this codebase it has
+   * twice reached production as a blank page reading "Application error: a
+   * client-side exception has occurred". Nothing conditional may be introduced
+   * above this block.
+   */
+
+  /** Nav label for the current view, e.g. "Analytics". Read from `config.ts`. */
+  const viewLabel = React.useMemo(
+    () => VIEWS.find((v) => v.id === viewContext?.view)?.label ?? "",
+    [viewContext?.view],
+  );
+
+  /**
+   * The clicked cell, in words: `transactions row 237, total_amount`.
+   *
+   * `rowIndex` is 0-based on the wire and 1-based here, because the number a
+   * reviewer can act on is the one they can count to in the source file. Empty
+   * string when nothing is selected, so every use site is a plain truthiness
+   * check rather than an optional chain three levels deep.
+   */
+  const selectionLabel = React.useMemo(() => {
+    const sel = viewContext?.selection;
+    if (!sel) return "";
+    return `${sel.dataset} row ${sel.rowIndex + 1}${sel.column ? `, ${sel.column}` : ""}`;
+  }, [viewContext?.selection]);
+
+  /**
+   * The launcher's label. Factual, and it names the selection when there is one,
+   * because "Ask about TX-03" is a stronger statement that the assistant knows
+   * where the reviewer is than any amount of copy about being context-aware.
+   *
+   * A clicked cell outranks everything else here for the same reason it outranks
+   * the page dossier in retrieval: it is the most specific thing the reviewer has
+   * pointed at.
+   */
+  const launcherLabel = React.useMemo(() => {
+    if (selectionLabel) return "Ask about this cell";
+    if (viewContext?.defect) return `Ask about ${viewContext.defect}`;
+    if (viewContext?.metric) return `Ask about ${viewContext.metric}`;
+    if (viewLabel) return `Ask about ${viewLabel}`;
+    return "Ask about this pipeline";
+  }, [selectionLabel, viewContext?.defect, viewContext?.metric, viewLabel]);
+
+  /**
+   * The view state as the OFFLINE matcher should see it.
+   *
+   * Identical to `viewContext` except in one case: when a cell is selected and
+   * the page has no defect of its own, the row's first defect code stands in as
+   * the focused defect. That is a purely local substitution — it never leaves
+   * this component and is never posted — and it is what makes the scripted
+   * fallback useful for a clicked cell: `findScriptedAnswer` already prefers the
+   * focused defect's dossier, so a deployment with no API key answers "why is
+   * this cell flagged?" with that class's detection, decision and rationale
+   * instead of the run summary.
+   */
+  const offlineView = React.useMemo<ViewContext | null>(() => {
+    if (!viewContext) return null;
+    if (!viewContext.selection || viewContext.defect || selectionCodes.length === 0) {
+      return viewContext;
+    }
+    return { ...viewContext, defect: selectionCodes[0] };
+  }, [viewContext, selectionCodes]);
+
+  /** Page-specific prompts first, then the ten ranked questions, page-relevant first. */
+  const pagePrompts = React.useMemo<PagePrompt[]>(
+    () => pagePromptsFor(viewContext ?? null, selectionCodes),
+    [viewContext, selectionCodes],
+  );
+
+  const rankedQuestions = React.useMemo(
+    () => rankQuestionsForView(viewContext ?? null),
+    [viewContext],
   );
 
   const [messages, setMessages] = React.useState<Message[]>(() => [
@@ -635,7 +762,9 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOp
    */
   const askQuestion = async (question: string, offlineAnswer?: ScriptedAnswer) => {
     if (!question || isSending) return;
-    const fallback = () => offlineAnswer ?? findScriptedAnswer(scripted, question);
+    // The offline matcher is told the page too, so a failed API call degrades to
+    // an answer about what is on screen rather than to the run summary.
+    const fallback = () => offlineAnswer ?? findScriptedAnswer(scripted, question, offlineView);
 
     const history = buildHistory();
 
@@ -673,7 +802,13 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOp
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: question.slice(0, MAX_QUESTION_CHARS), history }),
+        body: JSON.stringify({
+          question: question.slice(0, MAX_QUESTION_CHARS),
+          history,
+          // Additive: a server built before this field existed ignores it, and
+          // this client omits it entirely when the shell passed no view state.
+          ...(viewContext ? { viewContext } : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -724,6 +859,10 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOp
               `context${fellBack}${skipNote}`,
             defectCode: linkCode,
             contextNote:
+              // The server's own account of which page it grounded against.
+              // Echoed, never inferred here: whether the view state actually
+              // reached retrieval is a fact about the server.
+              (data.context.viewNote ? `view: ${data.context.viewNote} · ` : "") +
               `context: ~${data.context.approxTokens.toLocaleString()} of ` +
               `${data.context.budgetTokens.toLocaleString()} token budget · ` +
               `${data.context.includedIds.join(", ")}` +
@@ -791,7 +930,18 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOp
   /** An interview chip asks its question through the same path as typing it. */
   const handleInterviewSelect = (item: InterviewQuestion) => {
     if (isSending) return;
-    void askQuestion(item.question, resolveInterviewAnswer(scripted, item));
+    void askQuestion(item.question, resolveInterviewAnswer(scripted, item, offlineView));
+  };
+
+  /**
+   * A page-specific chip goes through exactly the same path, resolved by exactly
+   * the same offline resolver. A chip that behaved differently from typing its
+   * text would be a demo rather than a feature — the same reason the interview
+   * chips work this way.
+   */
+  const handlePagePromptSelect = (item: PagePrompt) => {
+    if (isSending) return;
+    void askQuestion(item.question, resolveInterviewAnswer(scripted, item, offlineView));
   };
 
   /** Deep link into the Defect Explorer. Only fires for codes that exist. */
@@ -866,9 +1016,16 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOp
         onClick={() => setIsOpen(!isOpen)}
         className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full border border-accent bg-accent/10 px-4 py-2.5 font-medium text-accent shadow-lg backdrop-blur transition-all hover:bg-accent/20"
         aria-expanded={isOpen}
-        title="Open the grounded reviewer's assistant"
+        title={
+          viewLabel
+            ? `Open the grounded reviewer's assistant — it is told you are on ${viewLabel}`
+            : "Open the grounded reviewer's assistant"
+        }
       >
-        <span className="text-sm font-semibold">Ask about this pipeline</span>
+        {/* Names the page, and the selection when there is one. The assistant
+            IS told this — see the `viewContext` sent with every question — so
+            the label is a statement of fact rather than reassurance. */}
+        <span className="text-sm font-semibold">{launcherLabel}</span>
         <span className="flex h-2 w-2 rounded-full bg-ok" aria-hidden="true" />
       </button>
 
@@ -988,15 +1145,71 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOp
             </div>
           )}
 
+          {/* Page-specific prompts. First, because they are about the screen the
+              reviewer is looking at, and because they are the ones that
+              demonstrate the panel knows where it is. Absent entirely when no
+              view state was passed, which is also the older-client behaviour. */}
+          {pagePrompts.length > 0 && (
+            <div className="border-b border-line bg-accent/[0.04] p-4">
+              <p className="mb-2 text-2xs font-medium uppercase tracking-wider text-ink-faint">
+                About this page{viewLabel ? ` — ${viewLabel}` : ""}
+              </p>
+
+              {/* The selected cell, named. A reviewer who clicks a red cell has
+                  no way to know the panel was told about it, and an affordance
+                  nobody can see is one that does not exist. Coordinates are
+                  shown verbatim so the claim is checkable against the detail
+                  card in the inspector, which prints the same three values. */}
+              {selectionLabel && (
+                <div className="mb-2.5 rounded border border-accent/50 bg-accent/10 px-2.5 py-1.5">
+                  <p className="font-mono text-2xs font-semibold text-accent">
+                    Ask about this cell — {selectionLabel}
+                  </p>
+                  <p className="mt-1 text-2xs leading-relaxed text-ink-dim">
+                    Only those coordinates are sent. The server reads that row back out of the
+                    pipeline&apos;s own <code className="font-mono">csv_diff.json</code> — every
+                    column, raw and cleaned, with the defect code and the explanation the pipeline
+                    wrote — so the answer can cover the whole row, not just the cell.
+                  </p>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {pagePrompts.map((item) => (
+                  <button
+                    key={item.chip}
+                    type="button"
+                    disabled={isSending}
+                    onClick={() => handlePagePromptSelect(item)}
+                    title={item.question}
+                    className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                  >
+                    {item.chip}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-2xs text-ink-faint">
+                The assistant is told which view you are on
+                {viewContext?.defect ? `, and that ${viewContext.defect} is selected` : ""}
+                {viewContext?.metric ? `, and that ${viewContext.metric} is in focus` : ""}
+                {viewContext?.dataset ? `, and that the dataset in view is ${viewContext.dataset}` : ""}
+                {selectionLabel ? `, and which cell you have selected (${selectionLabel})` : ""}
+                . That page material is retrieved alongside whatever the question itself matches.
+              </p>
+            </div>
+          )}
+
           {/* The ten interview questions, ranked. Four visible, six behind a
               disclosure: ten chips at once would push the transcript off the
-              screen, which is the thing a reviewer actually came to read. */}
+              screen, which is the thing a reviewer actually came to read.
+              `rankedQuestions` is the same ten in the same rank order, with the
+              ones that belong to this page moved to the front — a partition, so
+              nothing is ever hidden by being on the wrong tab. */}
           <div className="border-b border-line bg-panel/50 p-4">
             <p className="mb-2 text-2xs font-medium uppercase tracking-wider text-ink-faint">
               The ten hardest questions about this pipeline, ranked
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {INTERVIEW_QUESTIONS.slice(0, 4).map((item) => (
+              {rankedQuestions.slice(0, 4).map((item) => (
                 <button
                   key={item.rank}
                   type="button"
@@ -1016,7 +1229,7 @@ export default function ChatAssistant({ bundle, defects, onSelectDefect, forceOp
                 six more ({INTERVIEW_QUESTIONS.length - 4})
               </summary>
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {INTERVIEW_QUESTIONS.slice(4).map((item) => (
+                {rankedQuestions.slice(4).map((item) => (
                   <button
                     key={item.rank}
                     type="button"
