@@ -135,20 +135,28 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
     );
   }
 
-  const { headers, rows } = currentDataset;
+  const { headers = [], rows = [] } = currentDataset;
 
-  const filteredRows = rows.filter((r) => {
-    if (selectedCode === "all") return true;
-    return r.defects.includes(selectedCode);
-  });
+  const filteredRows = React.useMemo(() => {
+    return rows.filter((r) => {
+      if (!r) return false;
+      if (selectedCode === "all") return true;
+      return Array.isArray(r.defects) && r.defects.includes(selectedCode);
+    });
+  }, [rows, selectedCode]);
 
-  const allCodes = Array.from(new Set(rows.flatMap((r) => r.defects))).sort();
+  const allCodes = React.useMemo(() => {
+    return Array.from(new Set(rows.flatMap((r) => r?.defects || []))).sort();
+  }, [rows]);
 
   const sortedRows = React.useMemo(() => {
     if (!sortCol) return filteredRows;
     return [...filteredRows].sort((a, b) => {
-      const valA = a.cells[sortCol]?.clean_value ?? a.cells[sortCol]?.raw_value ?? "";
-      const valB = b.cells[sortCol]?.clean_value ?? b.cells[sortCol]?.raw_value ?? "";
+      if (!a || !b) return 0;
+      const cellA = a.cells?.[sortCol];
+      const cellB = b.cells?.[sortCol];
+      const valA = cellA?.clean_value ?? cellA?.raw_value ?? "";
+      const valB = cellB?.clean_value ?? cellB?.raw_value ?? "";
 
       const numA = parseFloat(String(valA).replace(/[^0-9.-]+/g, ""));
       const numB = parseFloat(String(valB).replace(/[^0-9.-]+/g, ""));
