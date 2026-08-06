@@ -56,6 +56,11 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
     setSortDir("asc");
   }, [dataset]);
 
+  React.useEffect(() => {
+    if (rawContainerRef.current) rawContainerRef.current.scrollTop = 0;
+    if (cleanContainerRef.current) cleanContainerRef.current.scrollTop = 0;
+  }, [sortCol, sortDir]);
+
   const handleHeaderClick = (colName: string) => {
     if (sortCol === colName) {
       if (sortDir === "asc") {
