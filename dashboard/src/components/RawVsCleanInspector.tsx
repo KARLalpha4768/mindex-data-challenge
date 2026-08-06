@@ -283,14 +283,18 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
                       {headers.map((h) => {
                         const cell = r.cells[h] ?? { raw_value: "", status: "clean" };
                         const isErr = cell.status === "error" || cell.status === "fixed";
+                        const isFlashing = flashingCell?.row_id === r.row_id && flashingCell?.col === h;
+
                         return (
                           <td
                             key={h}
                             onClick={() => isErr && handleCellClick(r.row_id, h, cell)}
-                            className={`p-2 border-r border-line/50 transition-colors whitespace-nowrap ${
-                              isErr
-                                ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
-                                : "text-ink-dim"
+                            className={`p-2 border-r border-line/50 transition-all duration-300 whitespace-nowrap ${
+                              isFlashing
+                                ? "bg-red-500/40 text-red-100 font-bold ring-4 ring-red-400 animate-pulse shadow-xl shadow-red-500/50 z-10"
+                                : isErr
+                                  ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
+                                  : "text-ink-dim"
                             }`}
                             title={isErr ? `Click to inspect ${cell.defect_code}` : undefined}
                           >
