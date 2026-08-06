@@ -129,15 +129,8 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
   }, []);
 
   const currentDataset = data?.[dataset];
-  if (!currentDataset) {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-8 text-center text-ink-dim">
-        Loading CSV visual diff inspection data...
-      </div>
-    );
-  }
-
-  const { headers = [], rows = [] } = currentDataset;
+  const headers = currentDataset?.headers ?? [];
+  const rows = currentDataset?.rows ?? [];
 
   const filteredRows = React.useMemo(() => {
     return rows.filter((r) => {
@@ -178,6 +171,14 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
       return sortDir === "asc" ? cmp : -cmp;
     });
   }, [filteredRows, sortCol, sortDir]);
+
+  if (!currentDataset) {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-8 text-center text-ink-dim">
+        Loading CSV visual diff inspection data...
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
