@@ -89,7 +89,7 @@ export default function Analytics({
           subtitle="Declarative SQL metrics executed directly against output/warehouse.db. Every card leads with its explicit definition note and numerator/denominator rules."
         />
 
-        <ExecutiveCallout title="Executive Takeaway & SQL Engine Rationale" icon="📊">
+        <ExecutiveCallout title="Why the metrics are SQL, not pandas">
           All 6 business intelligence metrics are executed in <strong>declarative SQL</strong> directly against the 
           SQLite warehouse (<code className="font-mono text-ink">output/warehouse.db</code>). Metrics lead with explicit definition notes, 
           use database indexes for sub-millisecond execution, and prove a <strong>$0.00 revenue reconciliation delta</strong> across 474 fact sales rows.

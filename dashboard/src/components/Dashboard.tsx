@@ -81,6 +81,15 @@ const DEFAULT_ROUTE: Route = {
 
 const VALID_VIEWS = new Set<string>(VIEWS.map((v) => v.id));
 
+/* The nav renders two weights. Split once here rather than filtering inside the
+ * render, and deliberately as `=== "core"` / `!== "core"` so the two lists are a
+ * partition of `VIEWS` by construction: a view added later with a group nobody
+ * remembered to handle appears in the detail row rather than disappearing from
+ * the header. A tab that exists but cannot be reached is the one outcome this
+ * grouping must not be able to produce. */
+const CORE_VIEWS = VIEWS.filter((v) => v.group === "core");
+const DETAIL_VIEWS = VIEWS.filter((v) => v.group !== "core");
+
 function parseHash(hash: string): Route {
   const raw = hash.replace(/^#/, "");
   if (!raw) return DEFAULT_ROUTE;
@@ -204,6 +213,14 @@ export default function Dashboard({
     [navigate],
   );
 
+  /* Plain view navigation, for the orientation panel on the Overview. It goes
+   * through `navigate` rather than being left to the anchor's own href so the
+   * scroll position resets — landing halfway down the Raw vs Clean inspector
+   * because the Overview happened to be scrolled there is disorienting in a way
+   * that reads as a bug. The anchors keep their hrefs regardless, so
+   * middle-click and "open in new tab" still work. */
+  const goToView = React.useCallback((view: ViewId) => navigate({ view }), [navigate]);
+
   /**
    * What the assistant is told about where the reviewer is.
    *
@@ -293,9 +310,9 @@ export default function Dashboard({
               <button
                 type="button"
                 onClick={() => setShowGuide(true)}
-                className="rounded border border-accent/40 bg-accent/15 px-2.5 py-1 font-mono text-2xs font-semibold text-accent hover:bg-accent/25 transition-colors flex items-center gap-1 shadow-sm"
+                className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 font-mono text-2xs font-semibold text-accent transition-colors hover:bg-accent/20"
               >
-                <span>🎯</span> Interviewer Guide
+                Interviewer guide
               </button>
               <Badge tone="mono" title="Frozen analysis date used by every time-relative metric">
                 as_of {bundle.run.as_of_date}
@@ -314,16 +331,54 @@ export default function Dashboard({
           {/* ── View navigation ──────────────────────────────────────────
               Real anchors, not buttons: they are keyboard-navigable for free,
               open in a new tab correctly, and show their target in the status
-              bar. The hashchange listener does the rest. */}
-          <nav aria-label="Dashboard sections" className="-mb-px flex gap-1 overflow-x-auto">
-            {VIEWS.map((v) => {
+              bar. The hashchange listener does the rest.
+
+              TWO WEIGHTS, NOT TWO MENUS. The four "core" tabs are the route
+              through the submission; the five "detail" tabs are the supporting
+              evidence and sit after a separator at a smaller size. Nothing is
+              hidden — every tab is one click and one Tab-key press away, in
+              source order, with the same `aria-current` — but a reviewer with
+              eight minutes can now see which four to spend them on without
+              reading all nine labels. The grouping itself is declared in
+              `config.ts`; see the comment there for why. */}
+          <nav aria-label="Dashboard sections" className="-mb-px flex items-stretch gap-1 overflow-x-auto">
+            {CORE_VIEWS.map((v) => {
               const active = route.view === v.id;
               return (
                 <a
                   key={v.id}
                   href={`#${v.id}`}
                   aria-current={active ? "page" : undefined}
-                  className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${
+                  className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                    active
+                      ? "border-accent text-ink"
+                      : "border-transparent text-ink-dim hover:border-line-strong hover:text-ink"
+                  }`}
+                >
+                  {v.label}
+                </a>
+              );
+            })}
+
+            {/* Separator, not a heading: it is decoration for sighted users and
+                nothing at all for a screen reader, which reads the nav as one
+                flat list of nine links either way. */}
+            <span aria-hidden="true" className="my-2 w-px shrink-0 self-center bg-line" />
+            <span
+              aria-hidden="true"
+              className="hidden shrink-0 self-center pl-2 pr-1 text-2xs uppercase tracking-wider text-ink-faint sm:inline"
+            >
+              detail
+            </span>
+
+            {DETAIL_VIEWS.map((v) => {
+              const active = route.view === v.id;
+              return (
+                <a
+                  key={v.id}
+                  href={`#${v.id}`}
+                  aria-current={active ? "page" : undefined}
+                  className={`whitespace-nowrap border-b-2 px-2.5 py-2 text-xs transition-colors ${
                     active
                       ? "border-accent text-ink"
                       : "border-transparent text-ink-faint hover:border-line-strong hover:text-ink-dim"
@@ -361,6 +416,7 @@ export default function Dashboard({
             defects={defects}
             discountImpact={discountImpact}
             onSelectDefect={goToDefect}
+            onSelectView={goToView}
           />
         )}
 

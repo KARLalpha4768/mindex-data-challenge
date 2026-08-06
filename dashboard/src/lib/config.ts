@@ -115,17 +115,43 @@ export const CHART_COLORS = {
   series: ["#5b9dff", "#3fb950", "#d9b23c", "#c77dff", "#f0883e", "#4fd1c5"],
 };
 
-/** Section ids — these are the URL hashes, so they are part of the public API. */
+/**
+ * Section ids — these are the URL hashes, so they are part of the public API.
+ * Every id that has ever been linked to must stay in this list with the same
+ * spelling; the labels and the ORDER are free to change.
+ *
+ * WHY THERE IS A `group`, AND WHY NOTHING WAS REMOVED
+ * --------------------------------------------------
+ * Nine equally-weighted tabs is nine decisions before a reviewer has read
+ * anything, and this dashboard is read in about eight minutes. Every one of the
+ * nine is worth having — the profile, lineage, schema, analytics and test views
+ * are the evidence that the four headline decisions are not just claims — but
+ * they are the evidence, not the argument, and presenting both at the same
+ * weight makes the reviewer do the triage that this file should be doing for
+ * them.
+ *
+ * So: four CORE tabs, in the order someone should actually walk them (what was
+ * found → why those calls → see it in the data → interrogate it), rendered at
+ * full weight; five DETAIL tabs, unchanged and one click away, rendered
+ * smaller and dimmer behind a separator. Nothing is hidden, nothing is nested
+ * behind a menu, and every hash that worked before still works.
+ *
+ * Grouping is declared here rather than in `Dashboard.tsx` because the nav is
+ * not the only consumer of this list — `grounding.ts` builds the assistant's
+ * view-label map from it, and a second hand-maintained ordering somewhere else
+ * is a second thing that can drift.
+ */
 export const VIEWS = [
-  { id: "overview", label: "Overview" },
-  { id: "defects", label: "Defect Explorer" },
-  { id: "profile", label: "Data Profile" },
-  { id: "lineage", label: "Lineage" },
-  { id: "schema", label: "Schema" },
-  { id: "analytics", label: "Analytics" },
-  { id: "tests", label: "Validation & Tests" },
-  { id: "raw", label: "Raw vs Clean CSV" },
-  { id: "assistant", label: "Assistant Workspace" },
+  { id: "overview", label: "Overview", group: "core" },
+  { id: "defects", label: "Defect Explorer", group: "core" },
+  { id: "raw", label: "Raw vs Clean CSV", group: "core" },
+  { id: "assistant", label: "Assistant Workspace", group: "core" },
+  { id: "profile", label: "Data Profile", group: "detail" },
+  { id: "lineage", label: "Lineage", group: "detail" },
+  { id: "schema", label: "Schema", group: "detail" },
+  { id: "analytics", label: "Analytics", group: "detail" },
+  { id: "tests", label: "Validation & Tests", group: "detail" },
 ] as const;
 
 export type ViewId = (typeof VIEWS)[number]["id"];
+export type ViewGroup = (typeof VIEWS)[number]["group"];

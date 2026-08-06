@@ -31,7 +31,7 @@ export default function SchemaView({
         subtitle="SQLite warehouse schema (output/warehouse.db) with 1 central fact table and 4 conformed dimensions. Keyed by surrogate integer primary keys with explicit DDL check constraints."
       />
 
-      <ExecutiveCallout title="Star Schema & Data Architecture Rationale" icon="🏛️">
+      <ExecutiveCallout title="Why a star schema with surrogate keys">
         Modeled as 1 Fact table (<code className="font-mono text-ink">fact_sales</code>) surrounded by 4 Conformed Dimensions (<code className="font-mono text-ink">dim_date</code>, <code className="font-mono text-ink">dim_store</code>, <code className="font-mono text-ink">dim_product</code>, <code className="font-mono text-ink">dim_customer</code>). Uses <strong>surrogate integer primary keys</strong> to isolate historical facts from unstable source keys, and locks in the transaction grain once with DDL check constraints.
       </ExecutiveCallout>
 

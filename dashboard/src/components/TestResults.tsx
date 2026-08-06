@@ -150,7 +150,7 @@ export default function TestResults({ bundle }: { bundle: Bundle }) {
             results. Claiming a number the page cannot verify is the exact habit
             this project spent an audit removing. The count is asserted where it
             can be proven: `python scripts/verify_submission.py` in the repo. */}
-        <ExecutiveCallout title="Automated Verification & Integrity Guarantees" icon="🧪">
+        <ExecutiveCallout title="What the suite actually guarantees">
           Every defect-handling decision is verified against edge conditions, the suite is
           mutation-tested, foreign keys are strictly enforced, and revenue ties out with a{" "}
           <strong>$0.00 difference</strong> at both line and aggregate level. Run{" "}

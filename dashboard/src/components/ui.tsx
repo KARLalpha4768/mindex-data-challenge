@@ -111,24 +111,35 @@ export function Stat({
   );
 }
 
-/* ── Executive Narrative Callout Banner ──────────────────────────────────── */
+/* ── Section rationale note ──────────────────────────────────────────────── */
 
+/**
+ * A short "why this view exists" note at the head of a section.
+ *
+ * WHY IT NO LONGER TAKES AN `icon`. It used to render an emoji at 4x weight
+ * beside a coloured all-caps title on a shadowed card with a 4px accent rule —
+ * five decorative signals for one paragraph of prose, in an application whose
+ * stated palette rule is that colour always means something. Against the rest
+ * of this dashboard it read as marketing, and the audience is a senior data
+ * engineer who discounts a page that shouts.
+ *
+ * What replaced it is exactly the typography `Field` and `Stat` already use for
+ * a label above a value: a 2xs uppercase caption in `ink-faint`, a hairline
+ * rule to mark it as an aside, and the prose at the same size as the body text
+ * around it. No information was removed from any of the three call sites; only
+ * the decoration was.
+ */
 export function ExecutiveCallout({
-  icon = "💡",
   title,
   children,
 }: {
-  icon?: string;
   title: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="mb-4 rounded-lg border-l-4 border-l-accent border border-line bg-raised/80 p-3.5 shadow-xs">
-      <div className="flex items-center gap-2 font-semibold text-xs text-accent uppercase tracking-wider">
-        <span>{icon}</span>
-        <span>{title}</span>
-      </div>
-      <div className="mt-1.5 text-xs text-ink-dim leading-relaxed">{children}</div>
+    <div className="mb-5 border-l border-line-strong py-1 pl-4">
+      <div className="text-2xs font-medium uppercase tracking-wider text-ink-faint">{title}</div>
+      <div className="mt-1.5 max-w-4xl text-sm leading-relaxed text-ink-dim">{children}</div>
     </div>
   );
 }

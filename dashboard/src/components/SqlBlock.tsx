@@ -108,7 +108,7 @@ export default function SqlBlock({
               }}
               className="rounded bg-accent/20 border border-accent/40 px-2 py-0.5 font-mono text-3xs font-semibold text-accent hover:bg-accent/30 transition-colors"
             >
-              {showDeconstructed ? "Hide Deconstructed Clause Map" : "⚡ Deconstruct SQL Clause-by-Clause"}
+              {showDeconstructed ? "Hide clause breakdown" : "Break this query down clause by clause"}
             </button>
             <span className="font-mono text-2xs text-ink-faint">
               {sql.split("\n").length} lines
@@ -152,16 +152,14 @@ export default function SqlBlock({
       {showDeconstructed && (
         <div className="rounded-md border border-accent/40 bg-raised p-4 space-y-3 font-mono text-xs">
           <div className="flex items-center justify-between border-b border-line pb-2">
-            <span className="font-bold text-accent flex items-center gap-1.5">
-              <span>⚡</span> Interactive SQL Clause Breakdown
-            </span>
+            <span className="font-semibold text-accent">SQL clause breakdown</span>
             <span className="text-2xs text-ink-faint">Star Schema SQLite Engine</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-2xs">
             {/* SELECT Clause */}
             <div className="rounded border border-blue-500/30 bg-blue-500/10 p-2.5 space-y-1">
-              <span className="font-bold text-blue-400 block">🎯 SELECT (Calculated Business Metrics):</span>
+              <span className="block font-semibold text-blue-400">SELECT — calculated business metrics</span>
               <ul className="list-disc list-inside text-ink space-y-0.5">
                 {clauses.SELECT.map((c, i) => (
                   <li key={i} className="truncate">{c}</li>
@@ -171,7 +169,7 @@ export default function SqlBlock({
 
             {/* JOIN Clause */}
             <div className="rounded border border-purple-500/30 bg-purple-500/10 p-2.5 space-y-1">
-              <span className="font-bold text-purple-400 block">🔗 JOIN (Star Schema Links):</span>
+              <span className="block font-semibold text-purple-400">JOIN — star schema links</span>
               {clauses.JOIN.length > 0 ? (
                 <ul className="list-disc list-inside text-ink space-y-0.5">
                   {clauses.JOIN.map((c, i) => (
@@ -185,7 +183,7 @@ export default function SqlBlock({
 
             {/* WHERE Clause */}
             <div className="rounded border border-green-500/30 bg-green-500/10 p-2.5 space-y-1">
-              <span className="font-bold text-green-400 block">🛡️ WHERE (Data Quality Guards):</span>
+              <span className="block font-semibold text-green-400">WHERE — data quality guards</span>
               {clauses.WHERE.length > 0 ? (
                 <ul className="list-disc list-inside text-ink space-y-0.5">
                   {clauses.WHERE.map((c, i) => (
@@ -199,7 +197,7 @@ export default function SqlBlock({
 
             {/* GROUP BY Clause */}
             <div className="rounded border border-amber-500/30 bg-amber-500/10 p-2.5 space-y-1">
-              <span className="font-bold text-amber-400 block">📊 GROUP BY (Business Grain):</span>
+              <span className="block font-semibold text-amber-400">GROUP BY — business grain</span>
               {clauses.GROUP_BY.length > 0 ? (
                 <ul className="list-disc list-inside text-ink space-y-0.5">
                   {clauses.GROUP_BY.map((c, i) => (

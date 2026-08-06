@@ -69,6 +69,16 @@ import {
 } from "../src/lib/chatHandler";
 import { __resetRateLimiter } from "../src/lib/rateLimit";
 import { MAX_BODY_BYTES, MAX_HISTORY_TURNS, type ChatResponse, type ChatStatusResponse } from "../src/lib/chatContract";
+import {
+  ESTIMATED_ROW_HEIGHT,
+  OVERSCAN_ROWS,
+  centeredScrollTop,
+  comparableValue,
+  compareRows,
+  computeRowWindow,
+  nextSortState,
+  type SortState,
+} from "../src/lib/tableWindow";
 import type { Bundle, CsvDiff } from "../src/lib/types";
 
 /* ── Tiny harness ─────────────────────────────────────────────────────────── */
@@ -3145,6 +3155,245 @@ async function main(): Promise<void> {
     check(
       "the cell prompts read as statements, not exclamations",
       prompts.every((p) => !p.chip.includes("!") && !p.question.includes("!")),
+    );
+  }
+
+  /* ── 16. The Raw vs Clean table: comparator and window ────────────────────
+   *
+   * WHY THESE ARE TESTED HERE AND NOT BY CLICKING.
+   *
+   * `RawVsCleanInspector.tsx` renders 505 rows x 8 columns into two side-by-side
+   * tables. Rendering all of it froze the browser hard enough that the deployed
+   * page could not be screenshotted — so it is windowed, and only the visible
+   * rows are mounted. That makes two pure functions load-bearing in a way they
+   * were not before:
+   *
+   *   • the COMPARATOR decides the row order, and the order is now also the
+   *     addressing scheme — click-to-scroll finds an unmounted row by its INDEX
+   *     in the sorted order, because there is no DOM node to look up;
+   *   • the WINDOW decides which rows exist at all. An off-by-one here is not a
+   *     cosmetic glitch: it is a row that is silently absent from a data-quality
+   *     table, which is the single worst bug this dashboard could ship.
+   *
+   * Neither can be exercised by the rest of this suite, which never renders
+   * React. They are asserted against the REAL `csv_diff.json`, not a fixture,
+   * so the numbers below are the numbers a reviewer will actually scroll.
+   */
+
+  section("raw vs clean — sort comparator");
+
+  {
+    check(
+      "currency strings compare as money, not as text",
+      comparableValue("$1,000.00") === 1000 &&
+        comparableValue("$99.00") === 99 &&
+        (comparableValue("$99.00") as number) < (comparableValue("$1,000.00") as number),
+      `${String(comparableValue("$99.00"))} vs ${String(comparableValue("$1,000.00"))}`,
+    );
+    check(
+      "a bare decimal and its dollar-formatted twin compare equal (defect TX-02)",
+      comparableValue("142.50") === comparableValue("$142.50"),
+    );
+    check(
+      "negative amounts stay below zero (defect TX-10 returns)",
+      (comparableValue("-2") as number) < 0 && comparableValue("-2") === -2,
+    );
+    check(
+      "all three date formats reduce to the same instant (defect TX-01)",
+      comparableValue("2026-03-04") === comparableValue("03/04/2026") &&
+        comparableValue("2026-03-04") === comparableValue("04-03-2026"),
+      `${String(comparableValue("2026-03-04"))} / ${String(comparableValue("03/04/2026"))} / ${String(comparableValue("04-03-2026"))}`,
+    );
+    check(
+      "dates order chronologically across formats rather than alphabetically",
+      (comparableValue("12/31/2025") as number) < (comparableValue("2026-01-01") as number),
+    );
+    check("an empty cell has no comparable value", comparableValue("") === null && comparableValue("   ") === null);
+    check("anything else falls back to a case-insensitive string", comparableValue("S011") === "s011");
+
+    const rows = csvDiff.transactions?.rows ?? [];
+    check("the transactions diff is present to sort", rows.length > 0, `${rows.length} rows`);
+
+    if (rows.length > 0) {
+      const byAmount: SortState = { col: "total_amount", dir: "asc", source: "raw" };
+      const sorted = rows.slice().sort((a, b) => compareRows(a, b, byAmount));
+      const values = sorted
+        .map((r) => comparableValue(r.cells.total_amount?.raw_value ?? ""))
+        .filter((v): v is number => typeof v === "number");
+      let ascending = true;
+      for (let i = 1; i < values.length; i += 1) if (values[i] < values[i - 1]) ascending = false;
+      check(
+        "sorting the real total_amount column ascending is monotonic despite mixed $ formatting",
+        ascending && values.length > 400,
+        `${values.length} numeric values`,
+      );
+
+      const descending = rows.slice().sort((a, b) => compareRows(a, b, { ...byAmount, dir: "desc" }));
+      check(
+        "descending is the exact reverse ordering of ascending on the same column",
+        comparableValue(descending[0].cells.total_amount?.raw_value ?? "") ===
+          values[values.length - 1],
+      );
+
+      /* Empties last in BOTH directions. A blank is an absence, not a minimum,
+       * and a column with nulls must not bury them under 500 rows of data. */
+      const blanks = rows.filter((r) => !(r.cells.customer_id?.raw_value ?? "").trim()).length;
+      if (blanks > 0) {
+        const byCustomer: SortState = { col: "customer_id", dir: "desc", source: "raw" };
+        const tail = rows
+          .slice()
+          .sort((a, b) => compareRows(a, b, byCustomer))
+          .slice(-blanks);
+        check(
+          "blank cells sort to the end even when the direction is descending",
+          tail.every((r) => !(r.cells.customer_id?.raw_value ?? "").trim()),
+          `${blanks} blank customer_id`,
+        );
+      }
+    }
+
+    /* The header cycle. The third state is the point: source order IS file
+     * order, so there has to be a way back to it without a reload. */
+    const first = nextSortState(null, "total_amount", "raw");
+    const second = nextSortState(first, "total_amount", "raw");
+    const third = nextSortState(second, "total_amount", "raw");
+    check(
+      "a header cycles ascending -> descending -> source order",
+      first?.dir === "asc" && second?.dir === "desc" && third === null,
+      JSON.stringify([first, second, third]),
+    );
+    check(
+      "clicking a different column restarts at ascending rather than inheriting",
+      nextSortState(second, "quantity", "raw")?.dir === "asc",
+    );
+    check(
+      "the same column in the other pane is its own cycle",
+      nextSortState(second, "total_amount", "clean")?.dir === "asc",
+    );
+  }
+
+  section("raw vs clean — row window");
+
+  {
+    const rowCount = csvDiff.transactions?.rows.length ?? 0;
+    const headerCount = csvDiff.transactions?.headers.length ?? 0;
+    const rowHeight = ESTIMATED_ROW_HEIGHT;
+    const viewportHeight = 600;
+
+    check(
+      "the dataset under test is the one that froze the page",
+      rowCount > 500 && headerCount === 8,
+      `${rowCount} rows x ${headerCount} columns`,
+    );
+
+    const top = computeRowWindow({ rowCount, scrollTop: 0, viewportHeight, rowHeight, overscan: OVERSCAN_ROWS });
+    check(
+      "at the top of the table the window starts at row 0",
+      top.start === 0 && top.padTop === 0,
+      JSON.stringify(top),
+    );
+    check(
+      "the window is a small constant, not the whole table",
+      top.end - top.start < 40 && top.end < rowCount,
+      `${top.end - top.start} rows mounted of ${rowCount}`,
+    );
+
+    /* THE MEASUREMENT THIS WHOLE CHANGE IS FOR, asserted rather than claimed:
+     * mounted `<td>` elements across both panes, before and after. Nine columns
+     * per row (eight data columns plus the row-number column), two panes. */
+    const cellsBefore = rowCount * (headerCount + 1) * 2;
+    const cellsAfter = (top.end - top.start) * (headerCount + 1) * 2 + 4; // +4 spacer cells
+    check(
+      "windowing cuts mounted cells by more than 90%",
+      cellsAfter < cellsBefore * 0.1,
+      `${cellsBefore} -> ${cellsAfter} <td> across both panes`,
+    );
+
+    /* The scrollbar must not change. The spacers plus the mounted rows have to
+     * add up to exactly the height the full table occupied, or the thumb jumps
+     * and the last rows become unreachable. */
+    let heightsAgree = true;
+    let coversViewport = true;
+    const maxScroll = Math.max(0, rowCount * rowHeight - viewportHeight);
+    for (let scrollTop = 0; scrollTop <= maxScroll; scrollTop += 137) {
+      const w = computeRowWindow({ rowCount, scrollTop, viewportHeight, rowHeight, overscan: OVERSCAN_ROWS });
+      const total = w.padTop + (w.end - w.start) * rowHeight + w.padBottom;
+      if (Math.abs(total - rowCount * rowHeight) > 0.001) heightsAgree = false;
+
+      // Every row whose box intersects the viewport must be inside the window.
+      const firstVisible = Math.floor(scrollTop / rowHeight);
+      const lastVisible = Math.min(rowCount - 1, Math.floor((scrollTop + viewportHeight - 1) / rowHeight));
+      if (w.start > firstVisible || w.end <= lastVisible) coversViewport = false;
+    }
+    check("spacers plus mounted rows reproduce the full table height at every offset", heightsAgree);
+    check("every row that is on screen is mounted, at every offset", coversViewport);
+
+    const bottom = computeRowWindow({ rowCount, scrollTop: maxScroll, viewportHeight, rowHeight, overscan: OVERSCAN_ROWS });
+    check(
+      "the last row is reachable and the bottom spacer collapses",
+      bottom.end === rowCount && bottom.padBottom === 0,
+      JSON.stringify(bottom),
+    );
+
+    /* Degenerate inputs, all of which really occur: the fetch has not resolved
+     * (rowCount 0), the pane has not been measured (heights 0), the filter just
+     * shrank the row set under a scrolled container (scrollTop past the end). */
+    check(
+      "no rows yields an empty window rather than a negative slice",
+      JSON.stringify(computeRowWindow({ rowCount: 0, scrollTop: 400, viewportHeight, rowHeight, overscan: 8 })) ===
+        JSON.stringify({ start: 0, end: 0, padTop: 0, padBottom: 0 }),
+    );
+    {
+      const unmeasured = computeRowWindow({ rowCount, scrollTop: 0, viewportHeight: 0, rowHeight: 0, overscan: 8 });
+      check(
+        "an unmeasured pane still produces a usable window from the fallbacks",
+        unmeasured.start === 0 && unmeasured.end > 0 && Number.isFinite(unmeasured.padBottom),
+        JSON.stringify(unmeasured),
+      );
+    }
+    {
+      const stale = computeRowWindow({ rowCount: 16, scrollTop: 9999, viewportHeight, rowHeight, overscan: 8 });
+      check(
+        "a scroll offset stranded past the end of a filtered row set clamps instead of emptying",
+        stale.start >= 0 && stale.end === 16 && stale.start < stale.end,
+        JSON.stringify(stale),
+      );
+    }
+    check(
+      "a negative scroll offset (rubber-band overscroll) is treated as the top",
+      computeRowWindow({ rowCount, scrollTop: -250, viewportHeight, rowHeight, overscan: 8 }).start === 0,
+    );
+
+    /* Click-to-scroll: with the row unmounted there is no node to scroll to, so
+     * the target offset is computed from the index instead. */
+    check(
+      "scrolling to the first row asks for the top, not a negative offset",
+      centeredScrollTop(0, rowCount, rowHeight, viewportHeight) === 0,
+    );
+    check(
+      "scrolling to the last row stops at the end of the content",
+      centeredScrollTop(rowCount - 1, rowCount, rowHeight, viewportHeight) === maxScroll,
+    );
+    {
+      const index = 250;
+      const offset = centeredScrollTop(index, rowCount, rowHeight, viewportHeight);
+      const centre = index * rowHeight + rowHeight / 2;
+      check(
+        "a mid-table row is centred in the viewport, clear of the sticky header",
+        Math.abs(centre - (offset + viewportHeight / 2)) < 1,
+        `row ${index} -> scrollTop ${offset}`,
+      );
+      const w = computeRowWindow({ rowCount, scrollTop: offset, viewportHeight, rowHeight, overscan: OVERSCAN_ROWS });
+      check(
+        "and that offset mounts the row, so the flash highlight has something to paint",
+        w.start <= index && index < w.end,
+        JSON.stringify(w),
+      );
+    }
+    check(
+      "an out-of-range index is clamped rather than producing NaN",
+      centeredScrollTop(99999, rowCount, rowHeight, viewportHeight) === maxScroll &&
+        centeredScrollTop(-5, rowCount, rowHeight, viewportHeight) === 0,
     );
   }
 
