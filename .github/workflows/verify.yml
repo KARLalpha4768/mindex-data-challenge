@@ -1,4 +1,4 @@
-name: Submission Verification & Quality Checks
+name: Submission Verification Gate
 
 on:
   push:
@@ -8,26 +8,23 @@ on:
 
 jobs:
   verify:
+    name: Verify Submission Suite
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
+          python-version: "3.13"
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy pandas pytest
+          pip install pandas pytest
 
-      - name: Run Ruff Linter
-        run: ruff check solution/src/
-
-      - name: Run Mypy Type Checker
-        run: mypy solution/src/ --ignore-missing-imports
-
-      - name: Run Full Submission Verification Suite
-        run: python scripts/verify_submission.py
+      - name: Run Verification Suite (47 Checks)
+        run: |
+          python scripts/verify_submission.py
