@@ -101,16 +101,15 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
       setFlashingCell(null);
     }, 15000);
 
-    // Synchronize both raw and clean tables so target row aligns perfectly across the screen
+    // Auto-scroll both raw and clean rows into view center
     const rawRowEl = rawRowRefs.current[row_id];
-    if (rawRowEl && rawContainerRef.current && cleanContainerRef.current) {
-      const containerHeight = rawContainerRef.current.clientHeight;
-      const rowTop = rawRowEl.offsetTop;
-      const rowHeight = rawRowEl.offsetHeight;
-      const targetScrollTop = Math.max(0, rowTop - containerHeight / 2 + rowHeight / 2);
+    const cleanRowEl = cleanRowRefs.current[row_id];
 
-      rawContainerRef.current.scrollTo({ top: targetScrollTop, behavior: "smooth" });
-      cleanContainerRef.current.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+    if (rawRowEl) {
+      rawRowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    if (cleanRowEl) {
+      cleanRowEl.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
 
