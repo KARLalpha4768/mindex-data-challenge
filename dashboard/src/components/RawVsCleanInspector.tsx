@@ -323,7 +323,7 @@ interface PaneProps {
   /** Raw side only: the "try this" example cell, outlined until it is used. */
   spotlight: { uid: string; col: string } | null;
   label: string;
-  legend: string;
+  legend: React.ReactNode;
 }
 
 function DiffPane({
@@ -349,12 +349,12 @@ function DiffPane({
   return (
     <div className="space-y-2">
       <div
-        className={`flex items-center justify-between text-xs font-semibold ${
+        className={`flex flex-wrap items-center justify-between gap-2 text-xs font-semibold ${
           isRaw ? "text-red-400" : "text-green-400"
         }`}
       >
-        <span>{label}</span>
-        <span>{legend}</span>
+        <span className="font-bold">{label}</span>
+        <div>{legend}</div>
       </div>
       <div
         ref={containerRef}
@@ -1107,7 +1107,12 @@ export default function RawVsCleanInspector({
             activeCell={activeKey}
             spotlight={spotlight}
             label={`Original Raw CSV (${dataset}.csv)`}
-            legend="Red / amber cells = seeded defects"
+            legend={
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/15 px-2.5 py-0.5 text-2xs text-red-300 font-semibold shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
+                <span>Click red cell data → Ask AI Assistant</span>
+              </span>
+            }
           />
         )}
 
@@ -1127,7 +1132,12 @@ export default function RawVsCleanInspector({
             activeCell={activeKey}
             spotlight={null}
             label={`Cleaned Pipeline Output (${dataset}_clean.csv)`}
-            legend="Green cells = transformed / imputed"
+            legend={
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-green-500/40 bg-green-500/15 px-2.5 py-0.5 text-2xs text-green-300 font-semibold shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
+                <span>Green cells = Transformed / Imputed Output</span>
+              </span>
+            }
           />
         )}
       </div>
