@@ -45,6 +45,33 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
     info: CellInfo;
   } | null>(null);
 
+  const [flashingCell, setFlashingCell] = React.useState<{ row_id: string; col: string } | null>(null);
+  const flashTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+  const cleanRowRefs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
+
+  const handleCellClick = (row_id: string, col: string, info: CellInfo) => {
+    setActiveCell({ row_id, col, info });
+
+    // Set flashing cell state for 15 seconds
+    setFlashingCell({ row_id, col });
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => {
+      setFlashingCell(null);
+    }, 15000);
+
+    // Auto-scroll the clean table to bring corresponding row into view
+    const targetRowEl = cleanRowRefs.current[row_id];
+    if (targetRowEl) {
+      targetRowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, []);
+
   React.useEffect(() => {
     fetch("/data/csv_diff.json")
       .then((r) => r.json())
@@ -133,7 +160,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
 
       {/* Popover Detail Modal / Card when cell is clicked */}
       {activeCell && (
-        <div className="rounded-lg border border-accent/40 bg-raised p-4 shadow-lg transition-all">
+        <div className="rounded-lg border border-accent/40 bg-raised p-4 shadow-lg transition-all space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Badge tone={activeCell.info.status === "error" ? "bad" : "accent"}>
@@ -151,6 +178,18 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
               ✕ Close
             </button>
           </div>
+
+          {/* Flashing Green Fix & Explanation Banner */}
+          {flashingCell && (
+            <div className="flex flex-wrap items-center gap-2 rounded border border-green-500/50 bg-green-500/20 px-3 py-2 text-xs text-green-300 font-mono animate-pulse">
+              <span className="animate-spin">⚡</span>
+              <span className="font-bold uppercase tracking-wider text-green-400">Live Fix Trace (Flashing 15s)</span>
+              <span>·</span>
+              <span className="font-semibold text-red-300">Raw: {activeCell.info.raw_value || "(empty)"}</span>
+              <span>➔</span>
+              <span className="font-semibold text-green-200">Cleaned: {activeCell.info.clean_value || "(empty)"}</span>
+            </div>
+          )}
 
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 text-xs">
             <div className="rounded border border-red-500/30 bg-red-500/10 p-2.5">
@@ -210,7 +249,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
                         return (
                           <td
                             key={h}
-                            onClick={() => isErr && setActiveCell({ row_id: r.row_id, col: h, info: cell })}
+                            onClick={() => isErr && handleCellClick(r.row_id, h, cell)}
                             className={`p-2 border-r border-line/50 transition-colors ${
                               isErr
                                 ? "cursor-pointer bg-red-500/15 text-red-300 font-semibold hover:bg-red-500/25"
@@ -254,19 +293,29 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
                 </thead>
                 <tbody className="divide-y divide-line/40 font-mono">
                   {filteredRows.map((r, i) => (
-                    <tr key={r.row_id} className="hover:bg-raised/40">
+                    <tr
+                      key={r.row_id}
+                      ref={(el) => {
+                        cleanRowRefs.current[r.row_id] = el;
+                      }}
+                      className="hover:bg-raised/40 transition-colors"
+                    >
                       <td className="p-2 border-r border-line/50 text-ink-faint text-2xs">{i + 1}</td>
                       {headers.map((h) => {
                         const cell = r.cells[h] ?? { clean_value: "", status: "clean" };
                         const isFixed = cell.status === "fixed" || cell.status === "error";
+                        const isFlashing = flashingCell?.row_id === r.row_id && flashingCell?.col === h;
+
                         return (
                           <td
                             key={h}
-                            onClick={() => isFixed && setActiveCell({ row_id: r.row_id, col: h, info: cell })}
-                            className={`p-2 border-r border-line/50 transition-colors ${
-                              isFixed
-                                ? "cursor-pointer bg-green-500/15 text-green-300 font-semibold hover:bg-green-500/25"
-                                : "text-ink-dim"
+                            onClick={() => isFixed && handleCellClick(r.row_id, h, cell)}
+                            className={`p-2 border-r border-line/50 transition-all duration-300 ${
+                              isFlashing
+                                ? "bg-green-500/40 text-green-100 font-bold ring-4 ring-green-400 animate-pulse shadow-xl shadow-green-500/50 z-10"
+                                : isFixed
+                                  ? "cursor-pointer bg-green-500/15 text-green-300 font-semibold hover:bg-green-500/25"
+                                  : "text-ink-dim"
                             }`}
                             title={isFixed ? `Click to inspect fix` : undefined}
                           >
