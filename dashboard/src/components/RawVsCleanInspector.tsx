@@ -928,7 +928,7 @@ export default function RawVsCleanInspector({
               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-400 font-bold font-mono text-xs">
                 1
               </span>
-              <span className="font-semibold text-ink">Click Red/Amber Cells on Left</span>
+              <span className="font-semibold text-ink">Click on Seeded Defect (Red Cell)</span>
             </div>
             <p className="text-2xs text-ink-dim leading-relaxed">
               Click any <span className="font-semibold text-red-400">red cell</span> (seeded defect) or <span className="font-semibold text-amber-300">amber cell</span> (preserved non-correction) in the Raw CSV.
@@ -1110,7 +1110,7 @@ export default function RawVsCleanInspector({
             legend={
               <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/15 px-2.5 py-0.5 text-2xs text-red-300 font-semibold shadow-sm">
                 <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
-                <span>Click red cell data → Ask AI Assistant</span>
+                <span>Click on seeded defect (red cell) → Ask AI Assistant</span>
               </span>
             }
           />

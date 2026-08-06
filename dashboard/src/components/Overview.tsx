@@ -185,7 +185,7 @@ export default function Overview({
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
             <div className="rounded border border-line/60 bg-panel/80 p-2.5">
-              <span className="font-bold text-accent">1. Click Red Cells</span>
+              <span className="font-bold text-accent">1. Click on Seeded Defect</span>
               <p className="text-2xs text-ink-dim mt-1">
                 In <a href="#raw" onClick={(e) => { if (!e.metaKey && !e.ctrlKey && onSelectView) { e.preventDefault(); onSelectView("raw"); } }} className="text-accent underline">Raw vs Clean</a>, click any red/amber cell to spotlight the defect.
               </p>
