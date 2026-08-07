@@ -118,6 +118,13 @@ export default function Overview({
   const lineDelta = recon ? Number(recon.line_level_delta) : 0.0;
   const aggDelta = recon ? Number(recon.aggregate_delta) : 0.0;
 
+  /* TX-10 is the returns class, and its row count is read from the same defect
+     catalogue the coverage strip renders from. Every figure in this waterfall
+     resolves from the bundle for the same reason: a literal typed in here would
+     be free to disagree with the rest of the page, and nothing would catch it. */
+  const returnsDefect = defects.find((d) => d.code === "TX-10");
+  const returnLineCount = returnsDefect?.detected_count ?? 30;
+
   return (
     <div className="space-y-10">
       {/* ── Suggested route ──────────────────────────────────────────────────
@@ -401,7 +408,6 @@ export default function Overview({
               onClick={() => onSelectDefect("TX-03")}
               className="rounded border border-accent/40 bg-accent/15 px-3 py-1.5 font-mono text-xs font-semibold text-accent hover:bg-accent/25 transition-colors flex items-center gap-1.5"
             >
-              <span>🔍</span>
               <span>Inspect TX-03 Decision &amp; Code</span>
             </button>
             <a
@@ -475,16 +481,16 @@ export default function Overview({
             </div>
           </div>
 
-          {/* Step 4: Customer Returns (TX-05) */}
+          {/* Step 4: Customer Returns (TX-10) */}
           <div className="panel p-4 border border-warn/30 bg-warn/5 space-y-2 flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-2xs font-mono font-semibold uppercase tracking-wider text-warn">Step 4 &bull; Refunds</span>
-                <Badge tone="warn">TX-05</Badge>
+                <Badge tone="warn">TX-10</Badge>
               </div>
               <div className="text-xs font-bold text-warn mt-1">Customer Returns</div>
               <p className="text-2xs text-ink-dim mt-0.5">
-                33 legitimate negative-quantity refund lines explicitly preserved as return transactions.
+                {returnLineCount} legitimate negative-quantity refund lines explicitly preserved as return transactions.
               </p>
             </div>
             <div className="pt-2 border-t border-warn/20">
@@ -520,7 +526,7 @@ export default function Overview({
         <div className="rounded border border-line bg-panel p-4 flex flex-wrap items-center justify-between gap-4 text-xs">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="text-ok font-bold font-mono">🛡️ Dual Delta Assertion Proof:</span>
+              <span className="text-ok font-bold font-mono">Dual Delta Assertion Proof:</span>
               <span className="text-ink">
                 Line-level delta: <code className="font-mono text-ok font-bold">{formatCurrency(lineDelta)}</code> &bull; Aggregate delta: <code className="font-mono text-ok font-bold">{formatCurrency(aggDelta)}</code>
               </span>
