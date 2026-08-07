@@ -468,7 +468,10 @@ const NO_SELECTION_CODES: readonly string[] = [];
  */
 type PanelSize = "compact" | "standard" | "wide" | "full";
 
+type PanelHeight = "compact" | "medium" | "tall" | "full";
+
 const PANEL_SIZE_KEY = "mindex.assistant.panelSize";
+const PANEL_HEIGHT_KEY = "mindex.assistant.panelHeight";
 
 const PANEL_SIZES: ReadonlyArray<{ id: PanelSize; label: string; className: string; title: string }> = [
   {
@@ -491,9 +494,46 @@ const PANEL_SIZES: ReadonlyArray<{ id: PanelSize; label: string; className: stri
   },
   {
     id: "full",
-    label: "XL (Full)",
+    label: "XL",
     className: "max-w-none w-full",
     title: "Full screen — entire viewport width for deep reading",
+  },
+];
+
+const PANEL_HEIGHTS: ReadonlyArray<{
+  id: PanelHeight;
+  label: string;
+  standaloneClass: string;
+  drawerClass: string;
+  title: string;
+}> = [
+  {
+    id: "compact",
+    label: "S",
+    standaloneClass: "h-[400px]",
+    drawerClass: "top-auto bottom-0 h-[50vh]",
+    title: "Compact height (400px / 50vh) — leaves room to see dashboard behind",
+  },
+  {
+    id: "medium",
+    label: "M",
+    standaloneClass: "h-[600px]",
+    drawerClass: "top-auto bottom-0 h-[75vh]",
+    title: "Medium height (600px / 75vh) — balanced view",
+  },
+  {
+    id: "tall",
+    label: "L",
+    standaloneClass: "h-[850px]",
+    drawerClass: "top-auto bottom-0 h-[92vh]",
+    title: "Tall height (850px / 92vh) — 3x taller reading room for audits",
+  },
+  {
+    id: "full",
+    label: "XL",
+    standaloneClass: "min-h-[calc(100vh-120px)] h-[calc(100vh-120px)]",
+    drawerClass: "inset-y-0 h-full",
+    title: "Full height (100% viewport) — maximum vertical reading space",
   },
 ];
 
@@ -521,19 +561,24 @@ export default function ChatAssistant({
     [isOpen, onToggleOpen],
   );
   /**
-   * Panel width, chosen by the reader rather than fixed by the author.
-   * Defaults to wide (L: 1280px) for maximum readability.
+   * Panel width & height, chosen by the reader rather than fixed by the author.
+   * Defaults to wide (L) and full height (XL) for maximum readability.
    */
   const [panelSize, setPanelSize] = React.useState<PanelSize>("wide");
+  const [panelHeight, setPanelHeight] = React.useState<PanelHeight>("full");
 
   React.useEffect(() => {
     try {
-      const stored = window.localStorage.getItem(PANEL_SIZE_KEY);
-      if (stored === "compact" || stored === "standard" || stored === "wide" || stored === "full") {
-        setPanelSize(stored);
+      const storedSize = window.localStorage.getItem(PANEL_SIZE_KEY);
+      if (storedSize === "compact" || storedSize === "standard" || storedSize === "wide" || storedSize === "full") {
+        setPanelSize(storedSize);
+      }
+      const storedHeight = window.localStorage.getItem(PANEL_HEIGHT_KEY);
+      if (storedHeight === "compact" || storedHeight === "medium" || storedHeight === "tall" || storedHeight === "full") {
+        setPanelHeight(storedHeight);
       }
     } catch {
-      /* Private mode, or storage disabled. The default is a good default. */
+      /* Private mode, or storage disabled. Defaults are safe. */
     }
   }, []);
 
@@ -542,7 +587,16 @@ export default function ChatAssistant({
     try {
       window.localStorage.setItem(PANEL_SIZE_KEY, next);
     } catch {
-      /* Non-fatal: the panel still resizes, it just will not be remembered. */
+      /* Non-fatal */
+    }
+  }, []);
+
+  const choosePanelHeight = React.useCallback((next: PanelHeight) => {
+    setPanelHeight(next);
+    try {
+      window.localStorage.setItem(PANEL_HEIGHT_KEY, next);
+    } catch {
+      /* Non-fatal */
     }
   }, []);
 
@@ -1117,18 +1171,20 @@ export default function ChatAssistant({
         <div
           className={
             isStandaloneView
-              ? `relative flex w-full flex-col rounded-xl border border-line bg-panel shadow-sm transition-all duration-150 min-h-[calc(100vh-140px)]`
-              : `fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-line bg-panel shadow-2xl transition-[max-width,width] duration-150 ${
-                  PANEL_SIZES.find((s) => s.id === panelSize)?.className ?? "max-w-6xl"
+              ? `relative flex w-full flex-col rounded-xl border border-line bg-panel shadow-sm transition-all duration-150 ${
+                  PANEL_HEIGHTS.find((h) => h.id === panelHeight)?.standaloneClass ?? "min-h-[calc(100vh-140px)]"
                 }`
+              : `fixed right-0 z-50 flex w-full flex-col border-l border-line bg-panel shadow-2xl transition-[max-width,width,height,top,bottom] duration-150 ${
+                  PANEL_SIZES.find((s) => s.id === panelSize)?.className ?? "max-w-6xl"
+                } ${PANEL_HEIGHTS.find((h) => h.id === panelHeight)?.drawerClass ?? "inset-y-0 h-full"}`
           }
           role="dialog"
           aria-label="Reviewer's assistant"
         >
-          <header className="flex items-start justify-between gap-3 border-b border-line bg-raised px-5 py-3.5">
+          <header className="flex flex-wrap items-center justify-between gap-2.5 border-b border-line bg-raised px-4 py-2.5 sm:px-5 sm:py-3">
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold text-ink">Grounded reviewer&apos;s assistant</h2>
+                <h2 className="text-sm sm:text-base font-semibold text-ink">Grounded reviewer&apos;s assistant</h2>
                 {isStandaloneView && (
                   <span className="rounded bg-accent/10 px-2 py-0.5 font-mono text-2xs font-bold text-accent">
                     Full Workspace
@@ -1144,44 +1200,90 @@ export default function ChatAssistant({
                 </span>
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {/* Width control presets */}
-              <div
-                className="flex items-center overflow-hidden rounded border border-line"
-                role="group"
-                aria-label="Panel width"
-              >
-                {PANEL_SIZES.map((size) => (
-                  <button
-                    key={size.id}
-                    type="button"
-                    onClick={() => choosePanelSize(size.id)}
-                    title={size.title}
-                    aria-pressed={panelSize === size.id}
-                    className={`px-2.5 py-1 text-2xs font-semibold transition-colors ${
-                      panelSize === size.id
-                        ? "bg-accent text-accent-contrast shadow-sm"
-                        : "text-ink-faint hover:bg-raised hover:text-ink-dim"
-                    }`}
-                  >
-                    {size.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1">
+                <span className="text-3xs font-mono font-bold text-ink-faint uppercase" title="Panel Width">
+                  ↔ W
+                </span>
+                <div
+                  className="flex items-center overflow-hidden rounded border border-line"
+                  role="group"
+                  aria-label="Panel width"
+                >
+                  {PANEL_SIZES.map((size) => (
+                    <button
+                      key={size.id}
+                      type="button"
+                      onClick={() => choosePanelSize(size.id)}
+                      title={size.title}
+                      aria-pressed={panelSize === size.id}
+                      className={`px-2 py-0.5 text-2xs font-semibold transition-colors ${
+                        panelSize === size.id
+                          ? "bg-accent text-accent-contrast shadow-sm"
+                          : "text-ink-faint hover:bg-raised hover:text-ink-dim"
+                      }`}
+                    >
+                      {size.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Quick Fullscreen / Maximize toggle */}
+              {/* Height control presets */}
+              <div className="flex items-center gap-1">
+                <span className="text-3xs font-mono font-bold text-ink-faint uppercase" title="Panel Height">
+                  ↕ H
+                </span>
+                <div
+                  className="flex items-center overflow-hidden rounded border border-line"
+                  role="group"
+                  aria-label="Panel height"
+                >
+                  {PANEL_HEIGHTS.map((height) => (
+                    <button
+                      key={height.id}
+                      type="button"
+                      onClick={() => choosePanelHeight(height.id)}
+                      title={height.title}
+                      aria-pressed={panelHeight === height.id}
+                      className={`px-2 py-0.5 text-2xs font-semibold transition-colors ${
+                        panelHeight === height.id
+                          ? "bg-accent text-accent-contrast shadow-sm"
+                          : "text-ink-faint hover:bg-raised hover:text-ink-dim"
+                      }`}
+                    >
+                      {height.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick Maximize / Fullscreen toggle (both width and height) */}
               {!isStandaloneView && (
                 <button
                   type="button"
-                  onClick={() => choosePanelSize(panelSize === "full" ? "wide" : "full")}
-                  className={`rounded border border-line px-2 py-1 text-2xs font-medium transition-colors ${
-                    panelSize === "full"
+                  onClick={() => {
+                    if (panelSize === "full" && panelHeight === "full") {
+                      choosePanelSize("wide");
+                      choosePanelHeight("tall");
+                    } else {
+                      choosePanelSize("full");
+                      choosePanelHeight("full");
+                    }
+                  }}
+                  className={`rounded border border-line px-2 py-0.5 text-2xs font-medium transition-colors ${
+                    panelSize === "full" && panelHeight === "full"
                       ? "border-accent bg-accent/10 text-accent font-semibold"
                       : "text-ink-dim hover:bg-raised hover:text-ink"
                   }`}
-                  title={panelSize === "full" ? "Restore wide width" : "Expand to full screen (100vw)"}
+                  title={
+                    panelSize === "full" && panelHeight === "full"
+                      ? "Restore wide/tall dimensions"
+                      : "Maximize both width and height to full screen"
+                  }
                 >
-                  {panelSize === "full" ? "⤡ Restore" : "⤢ Fullscreen"}
+                  {panelSize === "full" && panelHeight === "full" ? "⤡ Restore" : "⤢ Maximize"}
                 </button>
               )}
 
