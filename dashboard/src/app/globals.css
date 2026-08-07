@@ -110,3 +110,48 @@ body {
     text-decoration: underline !important;
   }
 }
+
+@keyframes cellGlowGreen {
+  0%, 100% {
+    box-shadow: 0 0 14px 2px rgba(74, 222, 128, 0.7);
+    background-color: rgba(34, 197, 94, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 4px 1px rgba(74, 222, 128, 0.25);
+    background-color: rgba(34, 197, 94, 0.18);
+  }
+}
+
+@keyframes cellGlowRed {
+  0%, 100% {
+    box-shadow: 0 0 14px 2px rgba(248, 113, 113, 0.7);
+    background-color: rgba(239, 68, 68, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 4px 1px rgba(248, 113, 113, 0.25);
+    background-color: rgba(239, 68, 68, 0.18);
+  }
+}
+
+@keyframes cellGlowAmber {
+  0%, 100% {
+    box-shadow: 0 0 14px 2px rgba(251, 191, 36, 0.7);
+    background-color: rgba(245, 158, 11, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 4px 1px rgba(251, 191, 36, 0.25);
+    background-color: rgba(245, 158, 11, 0.18);
+  }
+}
+
+.flash-glow-green {
+  animation: cellGlowGreen 1.25s ease-in-out infinite;
+}
+
+.flash-glow-red {
+  animation: cellGlowRed 1.25s ease-in-out infinite;
+}
+
+.flash-glow-amber {
+  animation: cellGlowAmber 1.25s ease-in-out infinite;
+}

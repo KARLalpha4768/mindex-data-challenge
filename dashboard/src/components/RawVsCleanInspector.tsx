@@ -430,12 +430,16 @@ function DiffPane({
                     const isFlagged =
                       cell.status === "error" || cell.status === "fixed" || isPreserved;
                     const isFlashing =
-                      !isRaw && flashingCell?.uid === r.uid && flashingCell?.col === h;
+                      flashingCell?.uid === r.uid && flashingCell?.col === h;
                     const isActive = activeCell?.uid === r.uid && activeCell?.col === h;
                     const isSpotlit = isRaw && spotlight?.uid === r.uid && spotlight?.col === h;
 
                     const tone = isFlashing
-                      ? "bg-green-500/40 text-green-100 font-bold ring-2 ring-green-400 ring-inset"
+                      ? isRaw
+                        ? isPreserved
+                          ? "bg-amber-500/40 text-amber-100 font-bold ring-2 ring-amber-400 ring-inset flash-glow-amber"
+                          : "bg-red-500/40 text-red-100 font-bold ring-2 ring-red-400 ring-inset flash-glow-red"
+                        : "bg-green-500/40 text-green-100 font-bold ring-2 ring-green-400 ring-inset flash-glow-green"
                       : isPreserved
                         ? "cursor-pointer bg-amber-500/15 text-amber-300 font-semibold hover:bg-amber-500/25"
                         : isFlagged
@@ -680,42 +684,19 @@ export default function RawVsCleanInspector({
         codes: row.defects ?? [],
       });
 
-      // Flash the counterpart cell for 15 seconds. This is state, not a DOM
-      // mutation, which is why it survives windowing untouched: whenever the row
-      // mounts — now, or in a moment when the scroll below reaches it — it
-      // paints highlighted.
+      // Flash both counterpart cells (red defect and green cleaned) for 15 seconds.
       setFlashingCell({ uid: row.uid, col });
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
       flashTimerRef.current = setTimeout(() => setFlashingCell(null), 15000);
 
-      /* CLICK-TO-SCROLL, UNDER VIRTUALIZATION.
-       *
-       * Bring the corresponding clean-side row into view. Two paths, in this
-       * order, and the second one is the whole reason this needed changing:
-       *
-       *   1. The row is mounted (it is inside the window or its overscan) —
-       *      `scrollIntoView` on the real node, exactly as before. Pixel-exact,
-       *      and it also nudges the page if the pane itself is off-screen.
-       *
-       *   2. The row is NOT mounted, which is now the common case: 505 rows,
-       *      ~34 in the DOM. There is no node, and `cleanRowRefs.current[uid]`
-       *      is null (React nulls it on unmount). Scroll the container to the
-       *      row's INDEX instead — the index is known from `displayIndexByUid`
-       *      whatever the sort and filter are — which mounts the row, and the
-       *      flash state above then paints it.
-       *
-       * The ref map is still keyed by `uid` and is still the fast path. What
-       * changed is that a null lookup is no longer a dead end.
-       */
-      const mounted = cleanRowRefs.current[row.uid];
-      if (mounted) {
-        mounted.scrollIntoView({ behavior: "smooth", block: "center" });
-        return;
-      }
+      // Scroll both panes in lockstep to keep the counterpart row perfectly centered and mounted
       const index = displayIndexByUid.get(row.uid);
-      if (index !== undefined) cleanWindow.scrollToIndex(index);
+      if (index !== undefined) {
+        cleanWindow.scrollToIndex(index);
+        rawWindow.scrollToIndex(index);
+      }
     },
-    [dataset, displayIndexByUid, cleanWindow],
+    [dataset, displayIndexByUid, cleanWindow, rawWindow],
   );
 
   /**
@@ -1023,13 +1004,12 @@ export default function RawVsCleanInspector({
             </button>
           </div>
 
-          {/* The transformation, stated once. Shown while the counterpart cell
-              is still highlighted in the clean pane, so the card and the table
-              are talking about the same thing. */}
+          {/* The transformation, stated once. Shown while counterpart cells
+              are synchronously flashing in both raw and clean panes. */}
           {flashingCell && (
             <div className="flex flex-wrap items-center gap-2 rounded border border-line bg-panel px-3 py-2 font-mono text-xs">
               <span className="text-2xs uppercase tracking-wider text-ink-faint">
-                highlighted in the clean pane for 15s
+                synchronously flashing in raw &amp; clean panes for 15s
               </span>
               <span className="text-ink-faint">·</span>
               <span className="text-red-300">{activeCell.info.raw_value || "(empty)"}</span>
@@ -1107,7 +1087,7 @@ export default function RawVsCleanInspector({
             containerRef={rawWindow.containerRef}
             onScroll={rawWindow.onScroll}
             onCellClick={handleCellClick}
-            flashingCell={null}
+            flashingCell={flashingCell}
             activeCell={activeKey}
             spotlight={spotlight}
             label={`Original Raw CSV (${dataset}.csv)`}
