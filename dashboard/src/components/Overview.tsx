@@ -301,6 +301,10 @@ export default function Overview({
           Context and approach
         </h3>
 
+        <div className="rounded-md border-l-2 border-accent bg-raised px-4 py-3 text-xs leading-relaxed text-ink-dim">
+          <strong className="font-medium text-ink">Core principle:</strong> &ldquo;Every judgment call here reduces to one question: is this anomaly a fault in the recording, or a fact about the world?&rdquo;
+        </div>
+
         <div className="grid grid-cols-1 gap-4 text-xs leading-relaxed md:grid-cols-2">
           <div className="space-y-1.5 rounded border border-line bg-raised p-4">
             <h4 className="text-2xs font-medium uppercase tracking-wider text-ink-faint">
