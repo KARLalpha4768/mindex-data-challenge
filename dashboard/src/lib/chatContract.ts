@@ -57,10 +57,129 @@ export interface ChatTurn {
   text: string;
 }
 
+/* ── View context (added after v4; every field below is additive) ─────────
+ *
+ * WHY THE PAGE THE REVIEWER IS ON IS PART OF THE WIRE CONTRACT.
+ *
+ * The dashboard is one route with nine views, and a reviewer asking "what does
+ * this chart show?" or "why do three stores breach the threshold?" is asking
+ * about the pixels in front of them. Retrieval that reads only the sentence
+ * cannot know that: "what does this show" shares no vocabulary with any dossier,
+ * so the selector falls back to the run-facts preamble and the model correctly
+ * answers "the context does not contain that" — which reads as an assistant that
+ * does not know its own dashboard.
+ *
+ * WHY IT IS SENT STRUCTURALLY RATHER THAN SCRAPED.
+ * The alternative — the panel reading `window.location.hash`, or worse walking
+ * the DOM for the active tab — was rejected on three grounds:
+ *   1. `Dashboard.tsx` already OWNS this state. Re-deriving it from the URL in a
+ *      second place means two parsers that can disagree, and the one in the chat
+ *      panel would be the one nobody notices has drifted.
+ *   2. The hash is a serialisation, not the state. `#defects/codes:TX-01,TX-02`
+ *      has to be parsed to be useful, and the dataset a child view is showing
+ *      (the Raw vs Clean inspector's dataset switch) is not in the hash at all
+ *      unless something puts it there.
+ *   3. Scraping the DOM would make grounding depend on markup: a class rename
+ *      would silently change what the model is told, with no type error and no
+ *      failing test.
+ * So the state travels as a prop, is validated server-side, and every field is
+ * optional — a client that omits `viewContext` retrieves exactly what it
+ * retrieved before this field existed.
+ */
+/* ── The selected cell (added after v5; additive, like everything above) ───
+ *
+ * WHY THIS CARRIES COORDINATES AND NOT CONTENT.
+ *
+ * "Why is this cell red?" and "what's wrong with this row?" are the two most
+ * natural questions to ask of the Raw vs Clean inspector, and neither one names
+ * anything a retrieval system can key off: no defect code, no metric, no column,
+ * often no verb. The only thing that makes them answerable is knowing WHICH cell
+ * the reviewer clicked.
+ *
+ * There are two ways to tell the server that, and only one of them is safe:
+ *
+ *   1. POST the cell's values — raw, clean, status, defect code, the pipeline's
+ *      explanation. Convenient, and wrong. Every one of those strings would be
+ *      attacker-controlled text landing inside the model prompt, from a public
+ *      URL, with no authentication in front of it. That is the injection channel
+ *      `normaliseViewContext` already refuses to open for `dataset` and `metric`,
+ *      and it would be a strange thing to close there and open here.
+ *   2. POST the COORDINATES — dataset, row index, column — and let the server
+ *      resolve the content itself out of `public/data/csv_diff.json`, a file it
+ *      already ships and already trusts. Three small, exactly-validatable fields;
+ *      nothing free-text reaches the prompt.
+ *
+ * This is (2). It is also strictly MORE capable than (1): because the server
+ * loads the row rather than being handed one cell, the model sees every column of
+ * that row — raw value, clean value, status, defect code — so "what's wrong with
+ * this row?" is answerable from the same selection that answered "why is this
+ * cell red?", and the answer can relate the clicked cell to its neighbours.
+ *
+ * WHY `rowIndex` IS THE SOURCE-ARRAY POSITION AND NOT `row_id`.
+ * `row_id` is the natural key and it is NOT unique — the 15 TX-09 rows are exact
+ * duplicates and share a transaction id, which is the whole point of that defect
+ * class. A `row_id` would therefore be ambiguous for precisely the rows a
+ * reviewer is most likely to click. The index into the dataset's `rows` array is
+ * unique by construction, stable across sorting and filtering in the inspector
+ * (which sorts a derived copy), and is the same number the server uses to look
+ * the row up.
+ */
+export interface CellSelection {
+  /** One of `stores` | `products` | `transactions`. Validated against that list. */
+  dataset: string;
+  /**
+   * Zero-based index into `csv_diff.json[dataset].rows`. Validated as a
+   * non-negative integer AND as being within range of the loaded file; an index
+   * past the end resolves to nothing and the question is answered without cell
+   * context rather than being rejected.
+   */
+  rowIndex: number;
+  /**
+   * The clicked column. Validated against that dataset's own `headers`.
+   *
+   * Optional and nullable on purpose: a row-level selection ("what's wrong with
+   * this row?") is a legitimate state, and the row block is rendered either way.
+   * A column that is not a header of that dataset invalidates the whole
+   * selection, silently — a coordinate the server cannot verify is not one it
+   * will act on.
+   */
+  column?: string | null;
+}
+
+export interface ViewContext {
+  /**
+   * The active view id — one of the ids in `config.ts:VIEWS`. Validated against
+   * a server-side map; an unknown id is discarded rather than trusted, so a
+   * stale or hand-crafted client cannot steer retrieval with a made-up view.
+   */
+  view: string;
+  /** Defect code currently open in the Defect Explorer, e.g. "TX-03". */
+  defect?: string | null;
+  /** Active code allow-list, from `#defects/codes:TX-01,TX-02`. */
+  codeFilter?: string[] | null;
+  /** Dataset in focus: the profiled or inspected table (stores/products/transactions). */
+  dataset?: string | null;
+  /** Metric in focus on the Analytics view, e.g. "return_rate_by_store". */
+  metric?: string | null;
+  /**
+   * The cell or row the reviewer has clicked in the Raw vs Clean inspector.
+   * Coordinates only — see `CellSelection`. Absent for every other view, and
+   * absent from a client built before this field existed, in which case
+   * retrieval behaves exactly as it did before.
+   */
+  selection?: CellSelection | null;
+}
+
 export interface ChatRequestBody {
   question: string;
   /** Oldest first. Server truncates to the most recent `MAX_HISTORY_TURNS`. */
   history?: ChatTurn[];
+  /**
+   * What the reviewer is looking at. Optional and additive — see `ViewContext`.
+   * Absent from a client built before this field existed, and absent is a valid
+   * state rather than an error: retrieval then behaves exactly as before.
+   */
+  viewContext?: ViewContext;
 }
 
 /**
@@ -80,6 +199,14 @@ export interface ChatContextSummary {
    * a client built against the earlier contract is unaffected.
    */
   aliasPhrases?: string[];
+  /**
+   * One line naming the view the server grounded against, e.g.
+   * `Analytics · metric in focus: return_rate_by_store`. Present only when the
+   * request carried a `viewContext` the server recognised — so its absence is
+   * itself informative: it means the page state did not reach retrieval.
+   * Optional, therefore ignored by a client built against the earlier contract.
+   */
+  viewNote?: string;
 }
 
 /* ── Numeric self-audit (added after v1; every field below is additive) ────

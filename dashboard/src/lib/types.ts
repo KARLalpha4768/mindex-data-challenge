@@ -228,3 +228,83 @@ export interface DefectView extends DefectSpec {
   coverage: "match" | "mismatch" | "missing";
   refs: CodeRef[];
 }
+
+/* ────────────────────────────────────────────────────────────────────────── *
+ * `public/data/csv_diff.json` — the raw-versus-clean cell diff
+ *
+ * A SECOND artefact, written by the same pipeline run as `bundle.json` and kept
+ * separate from it because it is row-level rather than run-level: one entry per
+ * source row per dataset, carrying both values of every cell and the defect code
+ * that explains any difference between them. `bundle.json` is what the pipeline
+ * CONCLUDED; this file is what it SAW, cell by cell.
+ *
+ * The shapes live here, in the shared type module, rather than being redeclared
+ * in each consumer, because there are now three of them and they must not drift:
+ *
+ *   • `RawVsCleanInspector.tsx` renders it in the browser (fetched at runtime);
+ *   • `csvDiff.ts` reads it from disk on the server for `/api/chat`;
+ *   • `grounding.ts` turns one row of it into a prompt block.
+ *
+ * The last two are the reason it is typed at all: when a reviewer clicks a cell,
+ * the browser sends only COORDINATES and the server resolves the CONTENT from
+ * this file. Both ends therefore have to agree about the shape, and a private
+ * copy of the interface in each of them is exactly how they would stop agreeing.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * One cell, as the diff writer emits it.
+ *
+ * `status` is the cell's role in the diff, not a severity:
+ *   "clean" — raw and clean agree; nothing happened here.
+ *   "error" — the raw value was defective and the row/value did not survive
+ *             intact (dropped, quarantined, or left flagged).
+ *   "fixed" — the pipeline changed the value, or deliberately preserved it and
+ *             exposed the discrepancy elsewhere (TX-03 is of this kind).
+ * `explanation` is prose the pipeline itself wrote for this cell; it is quoted
+ * verbatim into the prompt and never paraphrased.
+ */
+export interface CsvDiffCell {
+  raw_value: string;
+  clean_value: string;
+  /**
+   * What the pipeline did with this cell.
+   *
+   * `preserved` exists because "flagged" and "wrong" are not the same thing. A
+   * return's negative quantity (TX-10) and a silent discount's reported total
+   * (TX-03) are both correct data the pipeline deliberately declined to touch —
+   * and both are among the most important findings in the submission. Rendering
+   * them as errors told a reviewer the exact opposite of the decision on screen.
+   */
+  status: "clean" | "error" | "fixed" | "preserved";
+  defect_code: string | null;
+  explanation: string | null;
+}
+
+/**
+ * One source row.
+ *
+ * `row_id` is the natural key (transaction/product/store id) and is NOT unique:
+ * the 15 TX-09 rows are exact duplicates and share one transaction id by
+ * definition — that is the defect the inspector exists to display. The stable,
+ * unique identifier for a row is its POSITION in `CsvDiffDataset.rows`, which is
+ * what the client sends as `rowIndex` and what the server looks up.
+ */
+export interface CsvDiffRow {
+  row_id: string;
+  /** Defect codes present anywhere in this row, as the diff writer recorded them. */
+  defects: string[];
+  /** Keyed by column name. Every header should be present; readers tolerate gaps. */
+  cells: Record<string, CsvDiffCell>;
+}
+
+export interface CsvDiffDataset {
+  /** Column order as it appears in the source CSV. Also the allow-list for `column`. */
+  headers: string[];
+  rows: CsvDiffRow[];
+}
+
+/** The whole file. Every dataset optional: a partial file must still render. */
+export type CsvDiff = Partial<Record<DatasetName, CsvDiffDataset>>;
+
+/** The three dataset names this artefact can carry, as a runtime list. */
+export const CSV_DIFF_DATASETS: readonly DatasetName[] = ["stores", "products", "transactions"];

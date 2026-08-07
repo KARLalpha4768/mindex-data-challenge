@@ -3,14 +3,15 @@
 import React from "react";
 
 import { Badge, EmptyState, SectionHeader, SeverityBadge, Stat, TableWrap } from "@/components/ui";
-import { SEVERITY_ORDER } from "@/lib/config";
+import { SEVERITY_ORDER, type ViewId } from "@/lib/config";
 import { formatCurrency, formatInt } from "@/lib/format";
 import { type Bundle, type DefectView, resolveCleanedCounts } from "@/lib/types";
 
 /**
  * Overview — the eight-minute pitch.
  *
- * Answers, in order, the three questions a reviewer actually opens this with:
+ * Answers, in order, the questions a reviewer actually opens this with:
+ *   0. Where do I even start?           -> the suggested route
  *   1. Did it find everything?          -> the coverage strip
  *   2. What did it cost / find?         -> the headline counters
  *   3. What is the most important bit?  -> the critical-findings list
@@ -18,16 +19,73 @@ import { type Bundle, type DefectView, resolveCleanedCounts } from "@/lib/types"
  * Everything here is a link into the Defect Explorer. Nothing is a dead end.
  */
 
+/**
+ * The route through the submission, in the order it should be walked.
+ *
+ * WHY THESE THREE DEFECTS AND NOT THE OTHER FOURTEEN: each is a case where the
+ * obvious handling is the wrong handling, so each is a decision rather than a
+ * transformation — and decisions are the only part of this that a reviewer
+ * cannot verify by reading the diff. The rest of the catalogue is date parsing
+ * and currency stripping, which is work but not judgement.
+ *
+ * Declared as data rather than written out as JSX because the codes have to
+ * agree with the defect catalogue; a code that stopped existing should be
+ * visible as one edit here, not hunted through markup.
+ */
+const ROUTE_STEPS: ReadonlyArray<{
+  target: { kind: "defect"; code: string } | { kind: "view"; view: ViewId };
+  label: string;
+  detail: string;
+}> = [
+  {
+    target: { kind: "defect", code: "TX-03" },
+    label: "TX-03 — silent discounts",
+    detail:
+      "20 rows where the reported total is less than quantity × unit price. Recomputing the total would have invented revenue that was never charged; it is preserved verbatim and the discount exposed alongside it.",
+  },
+  {
+    target: { kind: "defect", code: "PR-02" },
+    label: "PR-02 — a price change, not a duplicate",
+    detail:
+      "Two rows for one product id with different prices. Deduplicating on the key would have silently picked one; it is treated as a slowly-changing attribute and both versions are quarantined with the delta stated.",
+  },
+  {
+    target: { kind: "defect", code: "ST-03" },
+    label: "ST-03 — imputation from the column's own vocabulary",
+    detail:
+      "Two NULL regions. The value is derived from the state-to-region mapping already present in this very column, never from an external list, and the row is marked as imputed.",
+  },
+  {
+    target: { kind: "view", view: "raw" },
+    label: "Raw vs Clean CSV",
+    detail:
+      "The same three decisions as cells: the raw value beside the cleaned one, red for defects, amber for the ones deliberately left alone.",
+  },
+  {
+    target: { kind: "view", view: "assistant" },
+    label: "Assistant",
+    detail:
+      "Grounded on the pipeline's own output. Click a cell in the inspector first and it answers about that exact row, resolved server-side rather than taken from the browser.",
+  },
+];
+
 export default function Overview({
   bundle,
   defects,
   discountImpact,
   onSelectDefect,
+  onSelectView,
 }: {
   bundle: Bundle;
   defects: DefectView[];
   discountImpact: number | null;
   onSelectDefect: (code: string) => void;
+  /**
+   * Navigate to a whole view. Optional so this component still renders in
+   * isolation; the route steps fall back to their plain `href`, which the
+   * shell's hashchange listener handles anyway.
+   */
+  onSelectView?: (view: ViewId) => void;
 }) {
   const rawTotal = Object.values(bundle.run.row_counts.raw ?? {}).reduce((a, b) => a + b, 0);
   const cleanCounts = resolveCleanedCounts(bundle.run.row_counts);
@@ -62,162 +120,211 @@ export default function Overview({
 
   return (
     <div className="space-y-10">
-      {/* ── First Viewport Hero Proof Strip ──────────────────────────────── */}
-      <section aria-label="Solution Evidence Summary" className="panel p-5 border border-accent/30 bg-accent/5 rounded-lg shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">🛡️</span>
-              <h2 className="text-base font-bold text-ink">Karl David &mdash; Data Engineering Solution Evidence</h2>
-            </div>
-            <p className="text-xs text-ink-dim">
-              Verified end-to-end data pipeline &amp; star schema warehouse execution.
-            </p>
+      {/* ── Suggested route ──────────────────────────────────────────────────
+          THE FIRST THING ON THE PAGE, and the only thing here that tells a
+          reviewer what to do rather than what was done. Someone landing on this
+          dashboard cold sees counters and nine tabs and no stated order; the
+          three defects below are the ones the whole submission turns on, and
+          without a route they are three entries in a seventeen-row grid.
+
+          Every step is a link, so the route is walkable rather than merely
+          described. Restrained on purpose: this is the first paragraph a senior
+          engineer reads, and a banner that shouts is a banner they discount. */}
+      <section aria-labelledby="route-heading" className="panel p-5">
+        <h2 id="route-heading" className="text-base font-semibold tracking-tight text-ink">
+          Suggested route, about eight minutes
+        </h2>
+        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-ink-dim">
+          Seventeen defect classes were seeded and all seventeen reconcile, but only three of them
+          required a judgement call — three places where the obvious handling would have quietly
+          produced wrong numbers. Read those three decisions first, then look at them as data in the
+          Raw vs Clean inspector, then put the assistant to work on whichever one you disbelieve.
+          Everything else on this page is the evidence behind those calls.
+        </p>
+
+        <ol className="mt-4 space-y-2">
+          {ROUTE_STEPS.map((step, index) => {
+            const href =
+              step.target.kind === "defect"
+                ? `#defects/${step.target.code}`
+                : `#${step.target.view}`;
+            return (
+              <li key={href} className="flex gap-3">
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 w-4 shrink-0 font-mono text-xs tabular-nums text-ink-faint"
+                >
+                  {index + 1}
+                </span>
+                <p className="text-sm leading-relaxed text-ink-dim">
+                  <a
+                    href={href}
+                    onClick={(e) => {
+                      // Left-click only, and only when a handler exists: a
+                      // modified click must stay a real navigation so
+                      // "open in new tab" works on every step.
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                      if (step.target.kind === "defect") {
+                        e.preventDefault();
+                        onSelectDefect(step.target.code);
+                      } else if (onSelectView) {
+                        e.preventDefault();
+                        onSelectView(step.target.view);
+                      }
+                    }}
+                    className="font-medium text-accent hover:underline"
+                  >
+                    {step.label}
+                  </a>{" "}
+                  <span className="text-ink-faint">—</span> {step.detail}
+                </p>
+              </li>
+            );
+          })}
+        </ol>
+
+        {/* Prominent 3-Step Reviewer Loop Box */}
+        <div className="mt-6 rounded-lg border border-accent/30 bg-accent/5 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent text-2xs font-bold text-accent-contrast">
+              ★
+            </span>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-ink">
+              Interactive 3-Step Reviewer Loop
+            </h3>
           </div>
-          <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-            <a href="#defects" className="hover:opacity-85 transition-opacity">
-              <Badge tone="ok">17/17 Defect Classes Reconciled</Badge>
-            </a>
-            <a href="#schema" className="hover:opacity-85 transition-opacity">
-              <Badge tone="mono">{formatInt(factSalesCount)} Fact Sales Rows</Badge>
-            </a>
-            <a href="#defects" className="hover:opacity-85 transition-opacity">
-              <Badge tone="warn">{formatInt(quarantinedCount)} Audited Quarantine Records</Badge>
-            </a>
-            <a href="#schema" className="hover:opacity-85 transition-opacity">
-              <Badge tone="ok">0 FK Violations</Badge>
-            </a>
-            <button
-              type="button"
-              onClick={() => onSelectDefect("TX-03")}
-              className="hover:opacity-85 transition-opacity text-left"
-              title="Inspect TX-03 silent discount proof"
-            >
-              <Badge tone="accent">$0.00 Revenue Delta</Badge>
-            </button>
-            <a href="#analytics" className="hover:opacity-85 transition-opacity">
-              <Badge tone="ok">{formatInt(metricCount)} SQL Metrics Executed</Badge>
-            </a>
-            <a href="#tests" className="hover:opacity-85 transition-opacity">
-              <Badge tone="mono">46/46 Automated Checks PASS</Badge>
-            </a>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="rounded border border-line/60 bg-panel/80 p-2.5">
+              <span className="font-bold text-accent">1. Select a red cell and ask assistant</span>
+              <p className="text-2xs text-ink-dim mt-1">
+                In <a href="#raw" onClick={(e) => { if (!e.metaKey && !e.ctrlKey && onSelectView) { e.preventDefault(); onSelectView("raw"); } }} className="text-accent underline font-semibold">Raw vs Clean</a>, select any red/amber cell to spotlight the defect and trace 15s flashing fixes.
+              </p>
+            </div>
+            <div className="rounded border border-line/60 bg-panel/80 p-2.5">
+              <span className="font-bold text-accent">2. Ask AI Chatbot</span>
+              <p className="text-2xs text-ink-dim mt-1">
+                Open the Assistant for a concise <span className="text-ink font-medium">Executive Summary</span> and <span className="text-ink font-medium">Extended Deep Analysis</span>.
+              </p>
+            </div>
+            <div className="rounded border border-line/60 bg-panel/80 p-2.5">
+              <span className="font-bold text-accent">3. Defect Explorer &amp; Code</span>
+              <p className="text-2xs text-ink-dim mt-1">
+                Drill into <a href="#defects" onClick={(e) => { if (!e.metaKey && !e.ctrlKey && onSelectView) { e.preventDefault(); onSelectView("defects"); } }} className="text-accent underline font-semibold">Defect Explorer</a> to inspect audit records and exact Python/SQL code lines.
+              </p>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ── Mindex Technical Evaluator Quick-Start Banner ─────────────────── */}
-      <section aria-label="Technical Evaluator Quick-Start" className="panel p-5 border border-accent/40 bg-raised rounded-lg space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🎯</span>
-            <h3 className="text-sm font-bold text-ink">For Mindex Technical Evaluators &amp; Reviewers</h3>
+      {/* ── Headline evidence strip ──────────────────────────────────────── */}
+      <section aria-label="Run evidence summary" className="panel p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="text-base font-semibold tracking-tight text-ink">
+              Karl David — data engineering submission
+            </h2>
+            <p className="text-xs text-ink-dim">
+              End-to-end pipeline and star-schema warehouse, reproduced from a single run.
+            </p>
           </div>
-          <Badge tone="accent">Interactive Evaluation Tools</Badge>
+          <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+            <Badge tone="ok">17/17 defect classes reconciled</Badge>
+            <Badge tone="mono">{formatInt(factSalesCount)} fact sales rows</Badge>
+            <Badge tone="warn">{formatInt(quarantinedCount)} quarantined with audit flags</Badge>
+            <Badge tone="ok">0 FK violations</Badge>
+            <Badge tone="accent">$0.00 revenue delta</Badge>
+            {/* Derived, not typed. A hardcoded test count here read "27/27"
+                long after the suite had grown to 87, which is the same
+                stale-figure failure this dashboard is built to expose. The
+                bundle is the only source permitted to state a number. */}
+            <Badge tone="ok">{formatInt(metricCount)} SQL metrics executed</Badge>
+          </div>
         </div>
+      </section>
 
-        <p className="text-xs text-ink-dim">
-          Every counter, badge, and defect chip on this dashboard is a <strong>live interactive element</strong>. Click any item to inspect the underlying Python ETL code, raw-vs-clean cell diffs, or SQL analytics.
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-          <div className="rounded border border-line bg-panel p-3 space-y-1.5 flex flex-col justify-between">
-            <div>
-              <span className="font-bold text-accent block font-mono">⚡ 1-Second Local Verification</span>
-              <p className="text-ink-dim mt-1">
-                Run <code className="font-mono text-ink">python scripts/verify_submission.py</code> to execute all 46 automated assertions in &lt;1 second.
-              </p>
-            </div>
-            <div className="pt-2">
-              <a
-                href="#tests"
-                className="inline-flex items-center gap-1 font-mono text-2xs text-accent hover:underline font-semibold"
-              >
-                <span>View verification log</span> &rarr;
-              </a>
-            </div>
+      {/* ── Verifying this yourself ──────────────────────────────────────────
+          Retoned, not removed: the audience is a senior data engineer, and the
+          three things here (how to re-run the checks, what the revenue tie-out
+          actually proves, which views are interactive) are the substance. The
+          decoration around them was reading as a sales page. */}
+      <section aria-labelledby="verify-heading" className="panel p-5">
+        <h2 id="verify-heading" className="text-base font-semibold tracking-tight text-ink">
+          Verifying this yourself
+        </h2>
+        <div className="mt-4 grid grid-cols-1 gap-6 text-sm md:grid-cols-3">
+          <div className="space-y-1.5">
+            <span className="block text-2xs font-medium uppercase tracking-wider text-ink-faint">
+              Local verification
+            </span>
+            <p className="leading-relaxed text-ink-dim text-xs">
+              <code className="font-mono text-ink">python scripts/verify_submission.py</code> runs
+              all 46 ingestion, cleaning, DDL-constraint and tie-out checks in under a second.
+            </p>
           </div>
 
-          <div className="rounded border border-line bg-panel p-3 space-y-1.5 flex flex-col justify-between">
-            <div>
-              <span className="font-bold text-green-400 block font-mono">💰 $0.00 Net Revenue Drift</span>
-              <p className="text-ink-dim mt-1">
-                Raw $158,044.29 input revenue reconciles 100% to warehouse fact rows, preserving $961.48 in silent promotions.
-              </p>
-            </div>
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => onSelectDefect("TX-03")}
-                className="inline-flex items-center gap-1 font-mono text-2xs text-green-400 hover:underline font-semibold"
-              >
-                <span>Inspect TX-03 handling</span> &rarr;
-              </button>
-            </div>
+          <div className="space-y-1.5">
+            <span className="block text-2xs font-medium uppercase tracking-wider text-ink-faint">
+              Revenue tie-out
+            </span>
+            <p className="leading-relaxed text-ink-dim text-xs">
+              $158,044.29 of raw input revenue reconciles to $158,044.29 of warehouse fact rows —
+              zero drift — while preserving the $961.48 of silent discounts that recomputing totals
+              would have invented.
+            </p>
           </div>
 
-          <div className="rounded border border-line bg-panel p-3 space-y-1.5 flex flex-col justify-between">
-            <div>
-              <span className="font-bold text-blue-400 block font-mono">⚡ Clickable Views &amp; Affordances</span>
-              <div className="text-ink-dim mt-1 space-y-1">
-                <div>&bull; <a href="#raw" className="text-accent underline font-semibold">Raw vs Clean CSV</a>: Select a red cell and ask assistant</div>
-                <div>&bull; <a href="#schema" className="text-accent underline font-semibold">Schema &amp; ERD</a>: Star schema diagram</div>
-                <div>&bull; <a href="#analytics" className="text-accent underline font-semibold">Analytics &amp; SQL</a>: Executed SQLite queries</div>
-                <div>&bull; <a href="#assistant" className="text-accent underline font-semibold">Assistant Workspace</a>: Verified AI answers</div>
-              </div>
-            </div>
-            <div className="pt-1">
-              <a
-                href="#raw"
-                className="inline-flex items-center gap-1 font-mono text-2xs text-blue-400 hover:underline font-semibold"
-              >
-                <span>Launch Cell Inspector</span> &rarr;
-              </a>
-            </div>
+          <div className="space-y-1.5">
+            <span className="block text-2xs font-medium uppercase tracking-wider text-ink-faint">
+              Interactive views &amp; affordances
+            </span>
+            <p className="leading-relaxed text-ink-dim text-xs">
+              <strong className="font-medium text-ink"><a href="#raw" className="text-accent underline">Raw vs Clean CSV</a></strong>: Select a red cell and ask assistant; <strong className="font-medium text-ink"><a href="#schema" className="text-accent underline">Schema</a></strong> draws the star ERD; and <strong className="font-medium text-ink"><a href="#analytics" className="text-accent underline">Analytics</a></strong> breaks each metric down to the SQL that produced it.
+            </p>
           </div>
         </div>
       </section>
 
       {/* ── Executive About & System Overview ────────────────────────────── */}
-      <section aria-labelledby="about-heading" className="panel p-6 border border-line bg-raised rounded-lg shadow-sm space-y-4">
+      <section aria-labelledby="about-heading" className="panel space-y-4 p-6">
         <SectionHeader
-          title="About & Executive Overview"
-          subtitle="A high-level synthesis of dataset context, data quality defects, engineering solutions, code verification, and analytical success."
+          title="Context and approach"
+          subtitle="What was ingested, what was wrong with it, what was built, and what was verified."
         />
         <h3 id="about-heading" className="sr-only">
-          About & Executive Overview
+          Context and approach
         </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs leading-relaxed">
-          <div className="p-4 rounded border border-line bg-panel space-y-1.5">
-            <h4 className="font-semibold text-sm text-accent flex items-center gap-2">
-              <span>📦</span> Data Ingestion Context
+        <div className="grid grid-cols-1 gap-4 text-xs leading-relaxed md:grid-cols-2">
+          <div className="space-y-1.5 rounded border border-line bg-raised p-4">
+            <h4 className="text-2xs font-medium uppercase tracking-wider text-ink-faint">
+              Data ingestion context
             </h4>
             <p className="text-ink-dim">
               The pipeline ingests legacy retail exports (<code className="font-mono text-ink">transactions.csv</code>, <code className="font-mono text-ink">stores.csv</code>, <code className="font-mono text-ink">products.csv</code>) representing point-of-sale line items, store dimension master records, and catalog list prices.
             </p>
           </div>
 
-          <div className="p-4 rounded border border-line bg-panel space-y-1.5">
-            <h4 className="font-semibold text-sm text-accent flex items-center gap-2">
-              <span>⚠️</span> Injected Defects &amp; Errors
+          <div className="space-y-1.5 rounded border border-line bg-raised p-4">
+            <h4 className="text-2xs font-medium uppercase tracking-wider text-ink-faint">
+              Seeded defects
             </h4>
             <p className="text-ink-dim">
               Identified <strong>17 distinct defect classes</strong>: multi-format dates (<code className="font-mono text-ink">MM/DD/YYYY</code>, <code className="font-mono text-ink">DD-MM-YYYY</code>), string currency formatting (<code className="font-mono text-ink">$</code>), 20 silent order discounts (5–20%), duplicate PKs (S007), $0.00 catalog prices (P027), orphan foreign keys, NULL regions/categories, future dates, and negative returns.
             </p>
           </div>
 
-          <div className="p-4 rounded border border-line bg-panel space-y-1.5">
-            <h4 className="font-semibold text-sm text-accent flex items-center gap-2">
-              <span>🛠️</span> Engineering &amp; Architecture Solutions
+          <div className="space-y-1.5 rounded border border-line bg-raised p-4">
+            <h4 className="text-2xs font-medium uppercase tracking-wider text-ink-faint">
+              Engineering and architecture
             </h4>
             <p className="text-ink-dim">
               Engineered a 6-stage Python ETL pipeline anchored on pinned <code className="font-mono text-ink">AS_OF_DATE</code> (2026-06-02). Applied string-faithful ingest, explicit regex/date ladders, deterministic survivorship rules, sentinel imputation (<code className="font-mono text-ink">GUEST</code>, <code className="font-mono text-ink">Unknown</code>), preserved reported net totals, and built a 5-table Star Schema Data Warehouse (<code className="font-mono text-ink">warehouse.db</code>).
             </p>
           </div>
 
-          <div className="p-4 rounded border border-line bg-panel space-y-1.5">
-            <h4 className="font-semibold text-sm text-accent flex items-center gap-2">
-              <span>📊</span> Code Verification &amp; Query Success
+          <div className="space-y-1.5 rounded border border-line bg-raised p-4">
+            <h4 className="text-2xs font-medium uppercase tracking-wider text-ink-faint">
+              Verification and query results
             </h4>
             <p className="text-ink-dim">
               Achieved <strong>17/17 defect coverage</strong> with every detected count matching the seeded expectation (<code className="font-mono text-ink">PASS</code>), a <strong>$0.00 revenue reconciliation delta</strong> proven at both line and aggregate level, and executed {formatInt(metricCount)} SQL business intelligence metrics against SQLite. The pytest suite and the release verifier run in the repository, where their counts are asserted rather than asserted here.

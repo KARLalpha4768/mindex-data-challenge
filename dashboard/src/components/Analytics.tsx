@@ -43,7 +43,25 @@ const METRIC_ORDER = [
   "top_customers_lifetime",
 ];
 
-export default function Analytics({ bundle }: { bundle: Bundle }) {
+/**
+ * `focusMetric` is the metric id from the hash (`#analytics/metric:aov_by_region`).
+ *
+ * It reorders nothing and hides nothing — the page is the same page. What it
+ * does is mark one card as the one in view and hand the same id to the grounded
+ * assistant, so "what does this chart show?" has a referent. The card headings
+ * are permalinks to their own metric, which is how the value gets set without a
+ * new control.
+ *
+ * HOOK ORDER: `ids` is memoised above the empty-metrics early return, and must
+ * stay there. A hook below a conditional return is React error #310.
+ */
+export default function Analytics({
+  bundle,
+  focusMetric = null,
+}: {
+  bundle: Bundle;
+  focusMetric?: string | null;
+}) {
   const metrics = bundle.analytics?.metrics ?? {};
   const ids = React.useMemo(() => {
     const known = METRIC_ORDER.filter((id) => id in metrics);
@@ -71,7 +89,7 @@ export default function Analytics({ bundle }: { bundle: Bundle }) {
           subtitle="Declarative SQL metrics executed directly against output/warehouse.db. Every card leads with its explicit definition note and numerator/denominator rules."
         />
 
-        <ExecutiveCallout title="Executive Takeaway & SQL Engine Rationale" icon="📊">
+        <ExecutiveCallout title="Why the metrics are SQL, not pandas">
           All 6 business intelligence metrics are executed in <strong>declarative SQL</strong> directly against the 
           SQLite warehouse (<code className="font-mono text-ink">output/warehouse.db</code>). Metrics lead with explicit definition notes, 
           use database indexes for sub-millisecond execution, and prove a <strong>$0.00 revenue reconciliation delta</strong> across 474 fact sales rows.
@@ -103,13 +121,21 @@ export default function Analytics({ bundle }: { bundle: Bundle }) {
       </section>
 
       {ids.map((id) => (
-        <MetricCard key={id} id={id} metric={metrics[id]} />
+        <MetricCard key={id} id={id} metric={metrics[id]} inFocus={id === focusMetric} />
       ))}
     </div>
   );
 }
 
-function MetricCard({ id, metric }: { id: string; metric: Metric }) {
+function MetricCard({
+  id,
+  metric,
+  inFocus = false,
+}: {
+  id: string;
+  metric: Metric;
+  inFocus?: boolean;
+}) {
   const columns = React.useMemo(() => {
     // Column order follows the first row's key order — the SQL SELECT list
     // order, which is the order the query author chose deliberately.
@@ -121,20 +147,34 @@ function MetricCard({ id, metric }: { id: string; metric: Metric }) {
   }, [metric.rows]);
 
   return (
-    <section aria-labelledby={`metric-${id}`} className="panel overflow-hidden">
+    <section
+      aria-labelledby={`metric-${id}`}
+      aria-current={inFocus ? "true" : undefined}
+      className={`panel overflow-hidden${inFocus ? " ring-1 ring-accent/60" : ""}`}
+    >
       <header className="border-b border-line px-5 py-4">
         <div className="flex flex-wrap items-center gap-2">
           <h3 id={`metric-${id}`} className="text-sm font-semibold text-ink">
-            {metric.title}
+            {/* Permalink to this card. Following it also tells the assistant
+                which metric is in view — see Dashboard.tsx. */}
+            <a
+              href={`#analytics/metric:${id}`}
+              className={inFocus ? "text-accent" : "hover:text-accent hover:underline"}
+              title={`Focus ${id} (and tell the assistant this is the metric in view)`}
+            >
+              {metric.title}
+            </a>
           </h3>
           <Badge tone="mono">{id}</Badge>
           <Badge tone="neutral">{formatInt(metric.rows.length)} rows</Badge>
+          {inFocus && <Badge tone="accent">in focus</Badge>}
         </div>
         <p className="mt-1.5 text-sm text-ink-dim">{metric.description}</p>
 
+        {/* The warn border and colour already carry the "caution" signal; the
+            emoji that used to sit here added tone, not information. */}
         {(id === "mom_revenue_by_category" || id === "mom_growth_by_category") && (
-          <div className="mt-2.5 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn flex items-center gap-2">
-            <span>⚠️</span>
+          <div className="mt-2.5 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
             <span>
               <strong>Partial Month Warning (June 2026):</strong> As of date is <code>2026-06-02</code> (only 2 days of data for June). The apparent 96-99% revenue drop in June 2026 is an artifact of the truncated 2-day window, not an operational decline.
             </span>

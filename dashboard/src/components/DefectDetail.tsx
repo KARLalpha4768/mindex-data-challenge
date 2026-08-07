@@ -70,6 +70,13 @@ export default function DefectDetail({
             label="Copy permalink"
             copiedLabel="Permalink copied"
           />
+          <a
+            href="#raw"
+            className="inline-flex items-center gap-1.5 rounded border border-accent/40 bg-accent/10 px-2 py-1 font-mono text-xs text-accent transition-colors hover:bg-accent/20"
+          >
+            <span>Step 1:</span>
+            <span>Inspect in Raw vs Clean CSV</span>
+          </a>
           {refPath && (
             <a
               href={githubBlobUrl(refPath)}
@@ -77,7 +84,7 @@ export default function DefectDetail({
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1.5 rounded border border-line bg-raised px-2 py-1 font-mono text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
             >
-              {defect.source_ref}
+              <span>GitHub: {defect.source_ref}</span>
               <span className="sr-only"> (opens on GitHub in a new tab)</span>
             </a>
           )}
@@ -122,9 +129,8 @@ export default function DefectDetail({
 
         {/* ── Engineering Decision & Tradeoff Matrix ─────────────────────── */}
         <div className="mt-5 rounded-lg border border-accent/30 bg-raised/80 p-3.5 space-y-2">
-          <div className="text-2xs font-semibold uppercase tracking-wider text-accent flex items-center gap-1.5">
-            <span>⚖️</span>
-            <span>Engineering Decision & Tradeoff Matrix</span>
+          <div className="text-2xs font-semibold uppercase tracking-wider text-accent">
+            Decision and rejected alternative
           </div>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 text-xs">
             <div className="rounded border border-green-500/30 bg-green-500/10 p-2.5">

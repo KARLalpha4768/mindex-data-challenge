@@ -18,7 +18,23 @@ function dtypeTone(dtype: string, columnName: string): "neutral" | "warn" {
   return suspicious ? "warn" : "neutral";
 }
 
-export default function DataProfile({ bundle }: { bundle: Bundle }) {
+/**
+ * `focusDataset` comes from the hash (`#profile/dataset:stores`). It does two
+ * things and neither of them filters: the matching section is marked as the one
+ * in view, and the same value reaches the grounded assistant, so "what does this
+ * table's null column mean?" is answerable. A reviewer who arrives with no
+ * dataset pinned sees exactly what they saw before.
+ *
+ * No hooks in this component, so there is no hook-order hazard around the early
+ * return below; if one is ever added it must go above that return.
+ */
+export default function DataProfile({
+  bundle,
+  focusDataset = null,
+}: {
+  bundle: Bundle;
+  focusDataset?: string | null;
+}) {
   const profilingMap = resolveProfilingDatasets(bundle?.profiling);
   const datasets = Object.keys(profilingMap);
 
@@ -47,12 +63,27 @@ export default function DataProfile({ bundle }: { bundle: Bundle }) {
         const columns = profile.columns ?? [];
         const nullyColumns = columns.filter((c) => (c?.null_count ?? 0) > 0).length;
 
+        const inFocus = focusDataset === name;
+
         return (
-          <section key={name} aria-labelledby={`profile-${name}`}>
+          <section
+            key={name}
+            aria-labelledby={`profile-${name}`}
+            aria-current={inFocus ? "true" : undefined}
+          >
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h3 id={`profile-${name}`} className="font-mono text-sm font-semibold text-ink">
-                {name}
+                {/* Permalink to this dataset. Following it also tells the
+                    assistant which table is in view — see Dashboard.tsx. */}
+                <a
+                  href={`#profile/dataset:${name}`}
+                  className={inFocus ? "text-accent underline" : "hover:text-accent hover:underline"}
+                  title={`Focus ${name} (and tell the assistant this is the table in view)`}
+                >
+                  {name}
+                </a>
               </h3>
+              {inFocus && <Badge tone="accent">in focus</Badge>}
               <Badge tone="neutral">{formatInt(profile.row_count ?? 0)} rows</Badge>
               <Badge tone="neutral">{columns.length} columns</Badge>
               <Badge tone={(profile.duplicate_row_count ?? 0) > 0 ? "warn" : "neutral"}>
