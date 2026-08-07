@@ -193,7 +193,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
         <div>
           <h2 className="text-lg font-bold text-ink">Raw vs. Clean CSV Visual Inspector</h2>
           <p className="text-xs text-ink-dim">
-            Inspect raw source CSVs with errors highlighted in <span className="text-red-400 font-semibold">Red</span>, side-by-side with pipeline transformations in <span className="text-green-400 font-semibold">Green</span>.
+            <span className="text-accent font-semibold">Select a red cell and ask assistant</span>, or inspect its seeded defect, reason code, and live <span className="text-green-400 font-semibold">15s flashing Green fix</span> in the clean pipeline output.
           </p>
         </div>
 
@@ -295,17 +295,23 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
             {activeCell.info.explanation || "Standardized by cleaning rules."}
           </p>
 
-          {activeCell.info.defect_code && onSelectDefect && (
-            <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <a
+              href="#assistant"
+              className="rounded border border-line bg-panel px-3 py-1.5 text-xs font-semibold text-accent hover:border-accent hover:bg-raised transition-colors"
+            >
+              Select this red cell and ask assistant &rarr;
+            </a>
+            {activeCell.info.defect_code && onSelectDefect && (
               <button
                 type="button"
                 onClick={() => onSelectDefect(activeCell.info.defect_code!)}
-                className="rounded bg-accent px-3 py-1.5 text-xs font-semibold text-accent-contrast hover:bg-accent/90"
+                className="rounded bg-accent px-3 py-1.5 text-xs font-semibold text-accent-contrast hover:bg-accent/90 transition-colors"
               >
-                View {activeCell.info.defect_code} in Defect Explorer →
+                View {activeCell.info.defect_code} in Defect Explorer &rarr;
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 
@@ -316,7 +322,7 @@ export default function RawVsCleanInspector({ bundle, onSelectDefect }: Props) {
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-semibold text-red-400">
               <span>Original Raw CSV ({dataset}.csv)</span>
-              <span>Red cells = Seeded Defects {sortCol && <span className="ml-2 text-accent">(Sorted by {sortCol} {sortDir === "asc" ? "▲" : "▼"})</span>}</span>
+              <span>Red cells = Seeded Defects &bull; Select a red cell and ask assistant {sortCol && <span className="ml-2 text-accent">(Sorted by {sortCol} {sortDir === "asc" ? "▲" : "▼"})</span>}</span>
             </div>
             <div
               ref={rawContainerRef}

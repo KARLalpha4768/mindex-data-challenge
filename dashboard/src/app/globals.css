@@ -86,3 +86,27 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Document-ready print stylesheet for PDF exports */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+    background-image: none !important;
+  }
+  header, nav, .sr-only, button:not(.print-keep) {
+    display: none !important;
+  }
+  .panel {
+    border: 1px solid #e5e7eb !important;
+    background: #ffffff !important;
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+  .text-ink, .text-ink-dim, .text-ink-faint {
+    color: #111827 !important;
+  }
+  a {
+    text-decoration: underline !important;
+  }
+}

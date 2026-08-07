@@ -6,6 +6,19 @@ export const metadata: Metadata = {
   title: "Data Quality Review · Mindex Code Challenge",
   description:
     "Static review dashboard: 17 seeded data-quality defects, the decision taken on each, and a link to the exact line of pipeline code that handles it.",
+  openGraph: {
+    title: "Data Quality Review · Mindex Code Challenge",
+    description:
+      "Verified Python ETL & SQLite Star Schema data warehouse: 17/17 defect classes reconciled with $0.00 revenue drift.",
+    type: "website",
+    siteName: "Mindex Code Challenge Review Dashboard",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Data Quality Review · Mindex Code Challenge",
+    description:
+      "Verified Python ETL & SQLite Star Schema data warehouse: 17/17 defect classes reconciled with $0.00 revenue drift.",
+  },
 };
 
 export const viewport: Viewport = {
