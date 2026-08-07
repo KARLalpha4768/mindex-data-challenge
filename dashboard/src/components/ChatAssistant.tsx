@@ -448,6 +448,7 @@ interface Props {
    * question about a clicked cell by naming its defect class and decision.
    */
   selectionCodes?: readonly string[];
+  isStandaloneView?: boolean;
 }
 
 /**
@@ -460,38 +461,43 @@ interface Props {
 const NO_SELECTION_CODES: readonly string[] = [];
 
 /**
- * The three panel widths, and the key their choice is remembered under.
+ * The four panel widths, and the key their choice is remembered under.
  *
- * `standard` is the original 672px, kept so nothing is taken away from anyone
- * who preferred the narrow column beside the dashboard. `wide` is the default
- * because the assistant's answers are long-form. `full` is for reading a single
- * long answer with the dashboard temporarily out of the way — not a mode to
- * leave it in, which is why it is not the default.
+ * `compact` is side-by-side (576px). `standard` is a standard reading column (768px).
+ * `wide` is the 3x wider reading area (1280px). `full` is full screen (100vw).
  */
-type PanelSize = "standard" | "wide" | "full";
+type PanelSize = "compact" | "standard" | "wide" | "full";
 
 const PANEL_SIZE_KEY = "mindex.assistant.panelSize";
 
 const PANEL_SIZES: ReadonlyArray<{ id: PanelSize; label: string; className: string; title: string }> = [
   {
-    id: "standard",
+    id: "compact",
     label: "S",
-    className: "max-w-2xl",
-    title: "Standard width — the dashboard stays readable alongside",
+    className: "max-w-xl",
+    title: "Compact width (576px) — side-by-side reference with dashboard",
+  },
+  {
+    id: "standard",
+    label: "M",
+    className: "max-w-3xl",
+    title: "Medium width (768px) — standard column measure",
   },
   {
     id: "wide",
-    label: "M",
-    className: "max-w-5xl",
-    title: "Wide — fits a full answer without scrolling",
+    label: "L",
+    className: "max-w-6xl",
+    title: "Wide width (1280px) — 3x wider reading area for extended audits & code",
   },
   {
     id: "full",
-    label: "L",
-    className: "max-w-[96vw]",
-    title: "Full width — for reading one long answer",
+    label: "XL (Full)",
+    className: "max-w-none w-full",
+    title: "Full screen — entire viewport width for deep reading",
   },
 ];
+
+type PromptTab = "page" | "ranked" | "presets" | "none";
 
 export default function ChatAssistant({
   bundle,
@@ -502,6 +508,7 @@ export default function ChatAssistant({
   onToggleOpen,
   viewContext,
   selectionCodes = NO_SELECTION_CODES,
+  isStandaloneView = false,
 }: Props) {
   const [internalOpen, setInternalOpen] = React.useState(forceOpen);
   const isOpen = forceOpen || (propsIsOpen !== undefined ? propsIsOpen : internalOpen);
@@ -515,20 +522,16 @@ export default function ChatAssistant({
   );
   /**
    * Panel width, chosen by the reader rather than fixed by the author.
-   *
-   * The answers this assistant returns are long — an executive summary plus an
-   * extended analysis, often with a quoted audit record inside them. At the old
-   * fixed 672px a single answer scrolled for several screens, which is the one
-   * thing a reviewer under time pressure will not do. The three stops below are
-   * the same panel at increasing width; the choice persists so it survives the
-   * reload that a redeploy or a hard refresh causes mid-review.
+   * Defaults to wide (L: 1280px) for maximum readability.
    */
   const [panelSize, setPanelSize] = React.useState<PanelSize>("wide");
 
   React.useEffect(() => {
     try {
       const stored = window.localStorage.getItem(PANEL_SIZE_KEY);
-      if (stored === "standard" || stored === "wide" || stored === "full") setPanelSize(stored);
+      if (stored === "compact" || stored === "standard" || stored === "wide" || stored === "full") {
+        setPanelSize(stored);
+      }
     } catch {
       /* Private mode, or storage disabled. The default is a good default. */
     }
@@ -542,6 +545,11 @@ export default function ChatAssistant({
       /* Non-fatal: the panel still resizes, it just will not be remembered. */
     }
   }, []);
+
+  /** Collapsible prompt suggestion tabs - defaults to 'ranked' or 'page' on start, collapses after asking */
+  const [activePromptTab, setActivePromptTab] = React.useState<PromptTab>("ranked");
+  /** Expandable message ID for full reader mode on a specific answer */
+  const [expandedMessageId, setExpandedMessageId] = React.useState<string | null>(null);
 
   const [inputQuery, setInputQuery] = React.useState("");
   const [mode, setMode] = React.useState<Mode>("checking");
@@ -1087,36 +1095,46 @@ export default function ChatAssistant({
 
   return (
     <>
-      {/* Floating toggle */}
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full border border-accent bg-accent/10 px-4 py-2.5 font-medium text-accent shadow-lg backdrop-blur transition-all hover:bg-accent/20"
-        aria-expanded={isOpen}
-        title={
-          viewLabel
-            ? `Open the grounded reviewer's assistant — it is told you are on ${viewLabel}`
-            : "Open the grounded reviewer's assistant"
-        }
-      >
-        {/* Names the page, and the selection when there is one. The assistant
-            IS told this — see the `viewContext` sent with every question — so
-            the label is a statement of fact rather than reassurance. */}
-        <span className="text-sm font-semibold">{launcherLabel}</span>
-        <span className="flex h-2 w-2 rounded-full bg-ok" aria-hidden="true" />
-      </button>
+      {/* Floating toggle - only in drawer mode */}
+      {!isStandaloneView && (
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full border border-accent bg-accent/10 px-4 py-2.5 font-medium text-accent shadow-lg backdrop-blur transition-all hover:bg-accent/20"
+          aria-expanded={isOpen}
+          title={
+            viewLabel
+              ? `Open the grounded reviewer's assistant — it is told you are on ${viewLabel}`
+              : "Open the grounded reviewer's assistant"
+          }
+        >
+          <span className="text-sm font-semibold">{launcherLabel}</span>
+          <span className="flex h-2 w-2 rounded-full bg-ok" aria-hidden="true" />
+        </button>
+      )}
 
-      {isOpen && (
+      {(isOpen || isStandaloneView) && (
         <div
-          className={`fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-line bg-panel shadow-2xl transition-[max-width] duration-150 ${
-            PANEL_SIZES.find((s) => s.id === panelSize)?.className ?? "max-w-5xl"
-          }`}
+          className={
+            isStandaloneView
+              ? `relative flex w-full flex-col rounded-xl border border-line bg-panel shadow-sm transition-all duration-150 min-h-[calc(100vh-140px)]`
+              : `fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-line bg-panel shadow-2xl transition-[max-width,width] duration-150 ${
+                  PANEL_SIZES.find((s) => s.id === panelSize)?.className ?? "max-w-6xl"
+                }`
+          }
           role="dialog"
           aria-label="Reviewer's assistant"
         >
           <header className="flex items-start justify-between gap-3 border-b border-line bg-raised px-5 py-3.5">
             <div>
-              <h2 className="text-base font-semibold text-ink">Grounded reviewer&apos;s assistant</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-semibold text-ink">Grounded reviewer&apos;s assistant</h2>
+                {isStandaloneView && (
+                  <span className="rounded bg-accent/10 px-2 py-0.5 font-mono text-2xs font-bold text-accent">
+                    Full Workspace
+                  </span>
+                )}
+              </div>
               <p className="mt-0.5 flex items-center gap-2 text-2xs text-ink-dim">
                 {modeBadge}
                 <span>
@@ -1127,9 +1145,7 @@ export default function ChatAssistant({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {/* Width control. Three stops rather than a drag handle: a drag
-                  handle needs a pointer and steady aim, and this is read on a
-                  laptop trackpad during a review. */}
+              {/* Width control presets */}
               <div
                 className="flex items-center overflow-hidden rounded border border-line"
                 role="group"
@@ -1142,9 +1158,9 @@ export default function ChatAssistant({
                     onClick={() => choosePanelSize(size.id)}
                     title={size.title}
                     aria-pressed={panelSize === size.id}
-                    className={`px-2 py-1 text-2xs font-medium transition-colors ${
+                    className={`px-2.5 py-1 text-2xs font-semibold transition-colors ${
                       panelSize === size.id
-                        ? "bg-accent/15 text-accent"
+                        ? "bg-accent text-accent-contrast shadow-sm"
                         : "text-ink-faint hover:bg-raised hover:text-ink-dim"
                     }`}
                   >
@@ -1152,6 +1168,46 @@ export default function ChatAssistant({
                   </button>
                 ))}
               </div>
+
+              {/* Quick Fullscreen / Maximize toggle */}
+              {!isStandaloneView && (
+                <button
+                  type="button"
+                  onClick={() => choosePanelSize(panelSize === "full" ? "wide" : "full")}
+                  className={`rounded border border-line px-2 py-1 text-2xs font-medium transition-colors ${
+                    panelSize === "full"
+                      ? "border-accent bg-accent/10 text-accent font-semibold"
+                      : "text-ink-dim hover:bg-raised hover:text-ink"
+                  }`}
+                  title={panelSize === "full" ? "Restore wide width" : "Expand to full screen (100vw)"}
+                >
+                  {panelSize === "full" ? "⤡ Restore" : "⤢ Fullscreen"}
+                </button>
+              )}
+
+              {/* Reset/Clear Transcript */}
+              {messages.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMessages([
+                      {
+                        id: "init",
+                        source: "system",
+                        text:
+                          "Ask about the pipeline: any of the 17 defect classes, the cleaning decision taken on " +
+                          "each and why, the star schema, or any of the SQL metrics.",
+                        timestamp: now(),
+                      },
+                    ])
+                  }
+                  className="rounded border border-line px-2 py-1 text-2xs text-ink-faint hover:text-ink hover:bg-panel"
+                  title="Clear conversation and reset transcript"
+                >
+                  Clear
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={handleExportTranscript}
@@ -1160,20 +1216,20 @@ export default function ChatAssistant({
               >
                 Export Q&A Log
               </button>
-              <button
-                type="button"
-                onClick={() => setIsOpen(false)}
-                className="rounded px-2.5 py-1 text-xs text-ink-dim hover:bg-panel hover:text-ink"
-              >
-                Close
-              </button>
+
+              {!isStandaloneView && (
+                <button
+                  type="button"
+                  onClick={() => setIsOpen(false)}
+                  className="rounded px-2.5 py-1 text-xs text-ink-dim hover:bg-panel hover:text-ink"
+                >
+                  Close
+                </button>
+              )}
             </div>
           </header>
 
-          {/* The rejected-key banner. Takes the place of the generic offline
-              explainer, because when the key is the problem, "no key is
-              configured (or the bundle is unreadable)" is actively misleading:
-              a key IS configured, and Google refused it. */}
+          {/* The rejected-key banner */}
           {keyRejected && (
             <div className="border-b border-bad/50 bg-bad/10 px-5 py-3 text-2xs leading-relaxed text-ink">
               <p className="text-xs font-semibold text-bad">
@@ -1193,9 +1249,7 @@ export default function ChatAssistant({
             </div>
           )}
 
-          {/* Model-selection diagnosis. Collapsed, because on a healthy
-              deployment there is nothing here worth the vertical space — and
-              on a broken one it is the first thing anyone will want. */}
+          {/* Model-selection diagnosis */}
           {resolution && (
             <details className="border-b border-line bg-panel/40 px-5 py-2">
               <summary className="cursor-pointer text-2xs text-ink-faint hover:text-accent">
@@ -1208,8 +1262,6 @@ export default function ChatAssistant({
               </summary>
               <div className="mt-2 space-y-1 font-mono text-2xs leading-relaxed text-ink-dim">
                 {resolution.requested && <p>GEMINI_MODEL override: {resolution.requested}</p>}
-                {/* The transport lines come first: when an endpoint is refusing
-                    this key, no amount of model detail below explains it. */}
                 {resolution.transports && resolution.transports.length > 0 && (
                   <p>transports: {resolution.transports.join(" → ")}</p>
                 )}
@@ -1238,162 +1290,187 @@ export default function ChatAssistant({
             </details>
           )}
 
-          {/* Offline explainer — say why, not just that. */}
+          {/* Offline explainer */}
           {mode === "offline" && !keyRejected && (
-            <div className="border-b border-line bg-warn/5 px-5 py-2.5 text-2xs leading-relaxed text-ink-dim">
-              <span className="font-semibold text-warn">Offline mode.</span> This deployment has no{" "}
-              <code className="font-mono">GEMINI_API_KEY</code> configured (or the server could not read
-              the bundle), so no model is being called. Every answer below is assembled from{" "}
-              <code className="font-mono">bundle.json</code> — the pipeline&apos;s own output — and every
-              figure in it is read at render time.
+            <div className="border-b border-line bg-warn/5 px-5 py-2 text-2xs leading-relaxed text-ink-dim">
+              <span className="font-semibold text-warn">Offline mode.</span> Answers assembled from{" "}
+              <code className="font-mono">bundle.json</code> — the pipeline&apos;s own audited output.
             </div>
           )}
 
-          {/* Page-specific prompts. First, because they are about the screen the
-              reviewer is looking at, and because they are the ones that
-              demonstrate the panel knows where it is. Absent entirely when no
-              view state was passed, which is also the older-client behaviour. */}
-          {pagePrompts.length > 0 && (
-            <div className="border-b border-line bg-accent/[0.04] p-4">
-              <p className="mb-2 text-2xs font-medium uppercase tracking-wider text-ink-faint">
-                About this page{viewLabel ? ` — ${viewLabel}` : ""}
-              </p>
-
-              {/* The selected cell, named. A reviewer who clicks a red cell has
-                  no way to know the panel was told about it, and an affordance
-                  nobody can see is one that does not exist. Coordinates are
-                  shown verbatim so the claim is checkable against the detail
-                  card in the inspector, which prints the same three values. */}
-              {selectionLabel && (
-                <div className="mb-2.5 rounded border border-accent/50 bg-accent/10 px-2.5 py-1.5">
-                  <p className="font-mono text-2xs font-semibold text-accent">
-                    Ask about this cell — {selectionLabel}
-                  </p>
-                  <p className="mt-1 text-2xs leading-relaxed text-ink-dim">
-                    Only those coordinates are sent. The server reads that row back out of the
-                    pipeline&apos;s own <code className="font-mono">csv_diff.json</code> — every
-                    column, raw and cleaned, with the defect code and the explanation the pipeline
-                    wrote — so the answer can cover the whole row, not just the cell.
-                  </p>
-                </div>
-              )}
-              <div className="flex flex-wrap gap-1.5">
-                {pagePrompts.map((item) => (
+          {/* Collapsible Prompt Suggestions Tab Strip */}
+          <div className="border-b border-line bg-raised/70">
+            <div className="flex items-center justify-between gap-2 px-4 py-2 overflow-x-auto">
+              <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                <span className="text-2xs font-semibold uppercase tracking-wider text-ink-faint mr-1">
+                  Questions:
+                </span>
+                {pagePrompts.length > 0 && (
                   <button
-                    key={item.chip}
                     type="button"
-                    disabled={isSending}
-                    onClick={() => handlePagePromptSelect(item)}
-                    title={item.question}
-                    className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                    onClick={() => setActivePromptTab(activePromptTab === "page" ? "none" : "page")}
+                    className={`flex items-center gap-1 rounded px-2.5 py-1 text-2xs font-medium transition-colors ${
+                      activePromptTab === "page"
+                        ? "bg-accent text-accent-contrast font-semibold shadow-sm"
+                        : "bg-panel border border-line text-ink-dim hover:text-accent hover:border-accent/40"
+                    }`}
                   >
-                    {item.chip}
+                    <span>📌 About This Page</span>
+                    <span className="rounded-full bg-black/20 px-1.5 py-0.2 text-3xs">
+                      {pagePrompts.length}
+                    </span>
                   </button>
-                ))}
-              </div>
-              <p className="mt-2 text-2xs text-ink-faint">
-                The assistant is told which view you are on
-                {viewContext?.defect ? `, and that ${viewContext.defect} is selected` : ""}
-                {viewContext?.metric ? `, and that ${viewContext.metric} is in focus` : ""}
-                {viewContext?.dataset ? `, and that the dataset in view is ${viewContext.dataset}` : ""}
-                {selectionLabel ? `, and which cell you have selected (${selectionLabel})` : ""}
-                . That page material is retrieved alongside whatever the question itself matches.
-              </p>
-            </div>
-          )}
+                )}
 
-          {/* The ten interview questions, ranked. Four visible, six behind a
-              disclosure: ten chips at once would push the transcript off the
-              screen, which is the thing a reviewer actually came to read.
-              `rankedQuestions` is the same ten in the same rank order, with the
-              ones that belong to this page moved to the front — a partition, so
-              nothing is ever hidden by being on the wrong tab. */}
-          <div className="border-b border-line bg-panel/50 p-4">
-            <p className="mb-2 text-2xs font-medium uppercase tracking-wider text-ink-faint">
-              The ten hardest questions about this pipeline, ranked
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {rankedQuestions.slice(0, 4).map((item) => (
                 <button
-                  key={item.rank}
                   type="button"
-                  disabled={isSending}
-                  onClick={() => handleInterviewSelect(item)}
-                  title={item.question}
-                  className="rounded border border-accent/40 bg-accent/5 px-2.5 py-1 text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+                  onClick={() => setActivePromptTab(activePromptTab === "ranked" ? "none" : "ranked")}
+                  className={`flex items-center gap-1 rounded px-2.5 py-1 text-2xs font-medium transition-colors ${
+                    activePromptTab === "ranked"
+                      ? "bg-accent text-accent-contrast font-semibold shadow-sm"
+                      : "bg-panel border border-line text-ink-dim hover:text-accent hover:border-accent/40"
+                  }`}
                 >
-                  <span className="mr-1.5 font-mono text-2xs text-accent">{item.rank}</span>
-                  {item.chip}
+                  <span>🏆 10 Ranked Questions</span>
                 </button>
-              ))}
+
+                <button
+                  type="button"
+                  onClick={() => setActivePromptTab(activePromptTab === "presets" ? "none" : "presets")}
+                  className={`flex items-center gap-1 rounded px-2.5 py-1 text-2xs font-medium transition-colors ${
+                    activePromptTab === "presets"
+                      ? "bg-accent text-accent-contrast font-semibold shadow-sm"
+                      : "bg-panel border border-line text-ink-dim hover:text-accent hover:border-accent/40"
+                  }`}
+                >
+                  <span>📦 Scripted Presets</span>
+                  <span className="rounded-full bg-black/20 px-1.5 py-0.2 text-3xs font-mono">
+                    {scripted.length}
+                  </span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setActivePromptTab(
+                      activePromptTab === "none" ? (pagePrompts.length > 0 ? "page" : "ranked") : "none",
+                    )
+                  }
+                  className="text-2xs font-medium text-ink-faint hover:text-accent flex items-center gap-1 transition-colors"
+                  title={
+                    activePromptTab === "none"
+                      ? "Expand suggestions"
+                      : "Collapse suggestions to maximize reading height for the answer"
+                  }
+                >
+                  <span>{activePromptTab === "none" ? "▾ Show tabs" : "✕ Collapse tabs"}</span>
+                </button>
+              </div>
             </div>
 
-            <details className="mt-2">
-              <summary className="cursor-pointer text-2xs text-ink-faint hover:text-accent">
-                six more ({INTERVIEW_QUESTIONS.length - 4})
-              </summary>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {rankedQuestions.slice(4).map((item) => (
-                  <button
-                    key={item.rank}
-                    type="button"
-                    disabled={isSending}
-                    onClick={() => handleInterviewSelect(item)}
-                    title={item.question}
-                    className="rounded border border-accent/40 bg-accent/5 px-2.5 py-1 text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-                  >
-                    <span className="mr-1.5 font-mono text-2xs text-accent">{item.rank}</span>
-                    {item.chip}
-                  </button>
-                ))}
+            {/* Tab 1: Page-specific Prompts */}
+            {activePromptTab === "page" && pagePrompts.length > 0 && (
+              <div className="bg-accent/[0.04] p-3.5 max-h-48 overflow-y-auto border-t border-accent/20">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-2xs font-semibold uppercase tracking-wider text-accent">
+                    Context-aware prompts for {viewLabel || "current view"}
+                  </p>
+                  {selectionLabel && (
+                    <span className="font-mono text-2xs font-semibold text-accent bg-accent/15 px-2 py-0.5 rounded">
+                      Selected: {selectionLabel}
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {pagePrompts.map((item) => (
+                    <button
+                      key={item.chip}
+                      type="button"
+                      disabled={isSending}
+                      onClick={() => {
+                        handlePagePromptSelect(item);
+                        setActivePromptTab("none");
+                      }}
+                      title={item.question}
+                      className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs text-ink transition-colors hover:border-accent hover:bg-accent/20 disabled:opacity-50"
+                    >
+                      {item.chip}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </details>
+            )}
 
-            <p className="mt-2 text-2xs text-ink-faint">
-              These are asked through the normal path: the live model when one is configured,
-              the scripted bundle answer when not.
-            </p>
-
-            {/* Bundle chips: one per defect class, one per metric, plus the run
-                summary. Collapsed by default — twenty-four of them above the
-                transcript was the old layout, and it buried everything else. */}
-            <details className="mt-3 border-t border-line/60 pt-2.5">
-              <summary className="cursor-pointer text-2xs font-medium uppercase tracking-wider text-ink-faint hover:text-accent">
-                or jump straight to a scripted answer ({scripted.length})
-              </summary>
-              <div className="mt-2 flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
-                {scripted.map((p) => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    onClick={() => handlePresetSelect(p)}
-                    className="rounded border border-line bg-raised px-2.5 py-1 font-mono text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent"
-                  >
-                    {p.label}
-                  </button>
-                ))}
+            {/* Tab 2: Ranked Interview Questions */}
+            {activePromptTab === "ranked" && (
+              <div className="bg-panel/80 p-3.5 max-h-48 overflow-y-auto border-t border-line">
+                <p className="mb-2 text-2xs font-medium uppercase tracking-wider text-ink-faint">
+                  The ten hardest questions about this pipeline (click to ask):
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {rankedQuestions.map((item) => (
+                    <button
+                      key={item.rank}
+                      type="button"
+                      disabled={isSending}
+                      onClick={() => {
+                        handleInterviewSelect(item);
+                        setActivePromptTab("none");
+                      }}
+                      title={item.question}
+                      className="rounded border border-accent/40 bg-accent/5 px-2.5 py-1 text-xs text-ink transition-colors hover:border-accent hover:bg-accent/15 disabled:opacity-50"
+                    >
+                      <span className="mr-1.5 font-mono text-2xs font-bold text-accent">{item.rank}</span>
+                      {item.chip}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </details>
+            )}
+
+            {/* Tab 3: Scripted Bundle Presets */}
+            {activePromptTab === "presets" && (
+              <div className="bg-panel/80 p-3.5 max-h-48 overflow-y-auto border-t border-line">
+                <p className="mb-2 text-2xs font-medium uppercase tracking-wider text-ink-faint">
+                  Scripted defect and metric dossiers from bundle.json ({scripted.length}):
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {scripted.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => {
+                        handlePresetSelect(p);
+                        setActivePromptTab("none");
+                      }}
+                      className="rounded border border-line bg-raised px-2.5 py-1 font-mono text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent hover:bg-accent/5"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Transcript. Body text is `sm` rather than `xs`: at the widths this
-              panel now opens to, `xs` produced a long measure in small type,
-              which is the least readable combination available. */}
-          <div className="flex-1 space-y-6 overflow-y-auto p-5 text-sm leading-relaxed">
+          {/* Transcript Area - Maximized vertical and horizontal reading space */}
+          <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6 text-sm leading-relaxed">
             {messages.map((m) => (
               <div
                 key={m.id}
-                className={`flex flex-col ${m.source === "user" ? "items-end" : "items-start"}`}
+                className={`flex flex-col ${m.source === "user" ? "items-end" : "items-start w-full"}`}
               >
                 <div className="mb-1.5 flex items-center gap-2 text-2xs text-ink-faint">
                   <span>
                     {m.source === "user"
                       ? "You"
                       : m.source === "gemini"
-                        ? "Assistant"
+                        ? "Assistant (Live)"
                         : m.source === "pending"
                           ? "Assistant"
-                          : "Assistant"}
+                          : "Assistant (Bundle)"}
                   </span>
                   <span aria-hidden="true">·</span>
                   <span>{m.timestamp}</span>
@@ -1404,28 +1481,38 @@ export default function ChatAssistant({
                 </div>
 
                 <div
-                  className={`max-w-[95%] space-y-4 rounded-lg p-4 ${
+                  className={`w-full space-y-4 rounded-xl p-4 sm:p-5 transition-all ${
                     m.source === "user"
-                      ? "border border-accent/20 bg-accent/10 text-ink"
-                      : "border border-line bg-raised text-ink"
+                      ? "max-w-[85%] border border-accent/20 bg-accent/10 text-ink"
+                      : "border border-line bg-raised/90 text-ink shadow-sm"
                   }`}
                 >
-                  {/* Provenance line. Always present for assistant output. */}
-                  {m.sourceNote && (
-                    <p className="text-2xs italic text-ink-faint">{m.sourceNote}</p>
-                  )}
-
-                  {/* Context Scope Badge */}
+                  {/* Top provenance & action strip for Assistant messages */}
                   {m.source !== "user" && (
-                    <div className="flex items-center gap-1.5 rounded bg-panel/80 px-2.5 py-1 text-2xs text-ink-dim border border-line/50 font-mono">
-                      <span className="font-semibold text-accent">Grounded on:</span>
-                      <span>pipeline bundle.json ({m.audit ? `${m.audit.checked} figures verified` : "audited facts"})</span>
+                    <div className="flex items-center justify-between gap-2 border-b border-line/40 pb-2">
+                      <div className="flex items-center gap-2">
+                        {m.sourceNote && (
+                          <p className="text-2xs italic text-ink-faint">{m.sourceNote}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-1.5 rounded bg-panel/80 px-2 py-0.5 text-3xs text-ink-dim border border-line/50 font-mono">
+                          <span className="font-semibold text-accent">Grounded:</span>
+                          <span>bundle.json</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedMessageId(expandedMessageId === m.id ? null : m.id)}
+                          className="text-2xs font-mono text-ink-faint hover:text-accent transition-colors"
+                          title={expandedMessageId === m.id ? "Standard size" : "Expand answer card"}
+                        >
+                          {expandedMessageId === m.id ? "⤡ Standard" : "⤢ Expand"}
+                        </button>
+                      </div>
                     </div>
                   )}
 
-                  {/* Numeric self-audit, immediately under the provenance line:
-                      where the text came from, and whether its figures are in
-                      the material it came from, are the same question. */}
+                  {/* Numeric self-audit */}
                   {m.audit && <AuditNote audit={m.audit} />}
 
                   {m.source === "pending" ? (
@@ -1438,14 +1525,14 @@ export default function ChatAssistant({
                     </p>
                   ) : m.text.includes("---DEEPER_ANALYSIS---") ? (
                     <div className="text-sm leading-relaxed space-y-3">
-                      <div className="rounded border border-accent/30 bg-panel/40 p-3.5">
+                      <div className="rounded-lg border border-accent/30 bg-panel/60 p-4">
                         <div className="mb-2 flex items-center gap-1.5 text-2xs font-bold uppercase tracking-wider text-accent">
                           <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-contrast text-3xs font-mono">
                             ✓
                           </span>
-                          <span>Executive Summary (Simple TL;DR)</span>
+                          <span>Executive Summary (Core Findings)</span>
                         </div>
-                        <div className="whitespace-pre-wrap text-sm text-ink">
+                        <div className="whitespace-pre-wrap text-sm text-ink leading-relaxed">
                           <LinkedText
                             text={m.text.split("---DEEPER_ANALYSIS---")[0].trim()}
                             knownCodes={knownCodes}
@@ -1454,13 +1541,16 @@ export default function ChatAssistant({
                         </div>
                       </div>
 
-                      <details className="rounded-lg border border-line/80 bg-panel/60 p-3.5 transition-colors hover:border-accent/50" open>
+                      <details
+                        className="rounded-lg border border-line/80 bg-panel/80 p-4 transition-colors hover:border-accent/50"
+                        open
+                      >
                         <summary className="cursor-pointer flex items-center justify-between font-semibold text-accent text-xs">
                           <span className="flex items-center gap-1.5">
                             <span className="font-mono text-2xs">▶</span>
                             <span>Extended Deep Analysis & Technical Evidence</span>
                           </span>
-                          <span className="text-2xs font-normal text-ink-faint">Detailed Breakdown</span>
+                          <span className="text-2xs font-normal text-ink-faint">Technical Details</span>
                         </summary>
                         <div className="mt-3 border-t border-line/60 pt-3 whitespace-pre-wrap text-xs text-ink-dim leading-relaxed">
                           <LinkedText
@@ -1482,7 +1572,7 @@ export default function ChatAssistant({
                   )}
 
                   {m.talkingPoints && m.talkingPoints.length > 0 && (
-                    <div className="space-y-2 rounded border border-line/60 bg-panel/60 p-3">
+                    <div className="space-y-2 rounded-lg border border-line/60 bg-panel/60 p-3.5">
                       <p className="text-2xs font-semibold uppercase tracking-wider text-accent">
                         From the audit ledger
                       </p>
@@ -1532,9 +1622,7 @@ export default function ChatAssistant({
                     </div>
                   )}
 
-                  {/* What the server actually retrieved. Retrieval you cannot
-                      inspect is indistinguishable from retrieval that did not
-                      happen. */}
+                  {/* Context Note */}
                   {m.contextNote && (
                     <details className="rounded border border-line/60 bg-panel/60 p-2.5">
                       <summary className="cursor-pointer text-2xs font-semibold uppercase tracking-wider text-ink-faint">
@@ -1580,13 +1668,13 @@ export default function ChatAssistant({
                     ? "Ask anything about the defects, the decisions or the metrics…"
                     : "Ask offline — answers are matched against the bundle…"
                 }
-                className="flex-1 rounded border border-line bg-panel px-3.5 py-2.5 text-xs text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none disabled:opacity-60"
+                className="flex-1 rounded-lg border border-line bg-panel px-4 py-2.5 text-xs text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none disabled:opacity-60"
                 aria-label="Question"
               />
               <button
                 type="submit"
                 disabled={isSending || inputQuery.trim() === ""}
-                className="rounded bg-accent px-5 py-2.5 text-xs font-semibold text-panel transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg bg-accent px-5 py-2.5 text-xs font-semibold text-panel transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isSending ? "Asking…" : "Send"}
               </button>

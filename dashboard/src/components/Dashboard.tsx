@@ -453,7 +453,7 @@ export default function Dashboard({
         )}
 
         {route.view === "assistant" && (
-          <div className="mx-auto max-w-5xl">
+          <div className="mx-auto w-full max-w-7xl px-2 sm:px-4">
             <ChatAssistant
               bundle={bundle}
               defects={defects}
@@ -461,6 +461,7 @@ export default function Dashboard({
               viewContext={viewContext}
               selectionCodes={selectionCodes}
               forceOpen={true}
+              isStandaloneView={true}
             />
           </div>
         )}
