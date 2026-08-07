@@ -459,6 +459,40 @@ interface Props {
  */
 const NO_SELECTION_CODES: readonly string[] = [];
 
+/**
+ * The three panel widths, and the key their choice is remembered under.
+ *
+ * `standard` is the original 672px, kept so nothing is taken away from anyone
+ * who preferred the narrow column beside the dashboard. `wide` is the default
+ * because the assistant's answers are long-form. `full` is for reading a single
+ * long answer with the dashboard temporarily out of the way — not a mode to
+ * leave it in, which is why it is not the default.
+ */
+type PanelSize = "standard" | "wide" | "full";
+
+const PANEL_SIZE_KEY = "mindex.assistant.panelSize";
+
+const PANEL_SIZES: ReadonlyArray<{ id: PanelSize; label: string; className: string; title: string }> = [
+  {
+    id: "standard",
+    label: "S",
+    className: "max-w-2xl",
+    title: "Standard width — the dashboard stays readable alongside",
+  },
+  {
+    id: "wide",
+    label: "M",
+    className: "max-w-5xl",
+    title: "Wide — fits a full answer without scrolling",
+  },
+  {
+    id: "full",
+    label: "L",
+    className: "max-w-[96vw]",
+    title: "Full width — for reading one long answer",
+  },
+];
+
 export default function ChatAssistant({
   bundle,
   defects,
@@ -479,6 +513,36 @@ export default function ChatAssistant({
     },
     [isOpen, onToggleOpen],
   );
+  /**
+   * Panel width, chosen by the reader rather than fixed by the author.
+   *
+   * The answers this assistant returns are long — an executive summary plus an
+   * extended analysis, often with a quoted audit record inside them. At the old
+   * fixed 672px a single answer scrolled for several screens, which is the one
+   * thing a reviewer under time pressure will not do. The three stops below are
+   * the same panel at increasing width; the choice persists so it survives the
+   * reload that a redeploy or a hard refresh causes mid-review.
+   */
+  const [panelSize, setPanelSize] = React.useState<PanelSize>("wide");
+
+  React.useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(PANEL_SIZE_KEY);
+      if (stored === "standard" || stored === "wide" || stored === "full") setPanelSize(stored);
+    } catch {
+      /* Private mode, or storage disabled. The default is a good default. */
+    }
+  }, []);
+
+  const choosePanelSize = React.useCallback((next: PanelSize) => {
+    setPanelSize(next);
+    try {
+      window.localStorage.setItem(PANEL_SIZE_KEY, next);
+    } catch {
+      /* Non-fatal: the panel still resizes, it just will not be remembered. */
+    }
+  }, []);
+
   const [inputQuery, setInputQuery] = React.useState("");
   const [mode, setMode] = React.useState<Mode>("checking");
   const [modelName, setModelName] = React.useState<string>("");
@@ -1044,7 +1108,9 @@ export default function ChatAssistant({
 
       {isOpen && (
         <div
-          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-line bg-panel shadow-2xl"
+          className={`fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-line bg-panel shadow-2xl transition-[max-width] duration-150 ${
+            PANEL_SIZES.find((s) => s.id === panelSize)?.className ?? "max-w-5xl"
+          }`}
           role="dialog"
           aria-label="Reviewer's assistant"
         >
@@ -1061,6 +1127,31 @@ export default function ChatAssistant({
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* Width control. Three stops rather than a drag handle: a drag
+                  handle needs a pointer and steady aim, and this is read on a
+                  laptop trackpad during a review. */}
+              <div
+                className="flex items-center overflow-hidden rounded border border-line"
+                role="group"
+                aria-label="Panel width"
+              >
+                {PANEL_SIZES.map((size) => (
+                  <button
+                    key={size.id}
+                    type="button"
+                    onClick={() => choosePanelSize(size.id)}
+                    title={size.title}
+                    aria-pressed={panelSize === size.id}
+                    className={`px-2 py-1 text-2xs font-medium transition-colors ${
+                      panelSize === size.id
+                        ? "bg-accent/15 text-accent"
+                        : "text-ink-faint hover:bg-raised hover:text-ink-dim"
+                    }`}
+                  >
+                    {size.label}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
                 onClick={handleExportTranscript}
@@ -1285,8 +1376,10 @@ export default function ChatAssistant({
             </details>
           </div>
 
-          {/* Transcript */}
-          <div className="flex-1 space-y-6 overflow-y-auto p-5 text-xs">
+          {/* Transcript. Body text is `sm` rather than `xs`: at the widths this
+              panel now opens to, `xs` produced a long measure in small type,
+              which is the least readable combination available. */}
+          <div className="flex-1 space-y-6 overflow-y-auto p-5 text-sm leading-relaxed">
             {messages.map((m) => (
               <div
                 key={m.id}
