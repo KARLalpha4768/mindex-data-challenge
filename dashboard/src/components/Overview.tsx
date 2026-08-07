@@ -20,20 +20,16 @@ import { type Bundle, type DefectView, resolveCleanedCounts } from "@/lib/types"
  */
 
 /**
- * The route through the submission, in the order it should be walked.
+ * The route through the submission, grouped into decisions and verification.
  *
  * WHY THESE THREE DEFECTS AND NOT THE OTHER FOURTEEN: each is a case where the
  * obvious handling is the wrong handling, so each is a decision rather than a
  * transformation — and decisions are the only part of this that a reviewer
  * cannot verify by reading the diff. The rest of the catalogue is date parsing
  * and currency stripping, which is work but not judgement.
- *
- * Declared as data rather than written out as JSX because the codes have to
- * agree with the defect catalogue; a code that stopped existing should be
- * visible as one edit here, not hunted through markup.
  */
-const ROUTE_STEPS: ReadonlyArray<{
-  target: { kind: "defect"; code: string } | { kind: "view"; view: ViewId };
+const DECISION_STEPS: ReadonlyArray<{
+  target: { kind: "defect"; code: string };
   label: string;
   detail: string;
 }> = [
@@ -55,6 +51,13 @@ const ROUTE_STEPS: ReadonlyArray<{
     detail:
       "Two NULL regions. The value is derived from the state-to-region mapping already present in this very column, never from an external list, and the row is marked as imputed.",
   },
+];
+
+const VERIFICATION_STEPS: ReadonlyArray<{
+  target: { kind: "view"; view: ViewId };
+  label: string;
+  detail: string;
+}> = [
   {
     target: { kind: "view", view: "raw" },
     label: "Raw vs Clean CSV",
@@ -63,7 +66,7 @@ const ROUTE_STEPS: ReadonlyArray<{
   },
   {
     target: { kind: "view", view: "assistant" },
-    label: "Assistant",
+    label: "Assistant Workspace",
     detail:
       "Grounded on the pipeline's own output. Click a cell in the inspector first and it answers about that exact row, resolved server-side rather than taken from the browser.",
   },
@@ -149,46 +152,79 @@ export default function Overview({
           Everything else on this page is the evidence behind those calls.
         </p>
 
-        <ol className="mt-4 space-y-2">
-          {ROUTE_STEPS.map((step, index) => {
-            const href =
-              step.target.kind === "defect"
-                ? `#defects/${step.target.code}`
-                : `#${step.target.view}`;
-            return (
-              <li key={href} className="flex gap-3">
-                <span
-                  aria-hidden="true"
-                  className="mt-0.5 w-4 shrink-0 font-mono text-xs tabular-nums text-ink-faint"
-                >
-                  {index + 1}
-                </span>
-                <p className="text-sm leading-relaxed text-ink-dim">
-                  <a
-                    href={href}
-                    onClick={(e) => {
-                      // Left-click only, and only when a handler exists: a
-                      // modified click must stay a real navigation so
-                      // "open in new tab" works on every step.
-                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                      if (step.target.kind === "defect") {
-                        e.preventDefault();
-                        onSelectDefect(step.target.code);
-                      } else if (onSelectView) {
-                        e.preventDefault();
-                        onSelectView(step.target.view);
-                      }
-                    }}
-                    className="font-medium text-accent hover:underline"
-                  >
-                    {step.label}
-                  </a>{" "}
-                  <span className="text-ink-faint">—</span> {step.detail}
-                </p>
-              </li>
-            );
-          })}
-        </ol>
+        <div className="mt-4 space-y-4">
+          <div className="space-y-2">
+            <h3 className="text-2xs font-mono font-semibold uppercase tracking-wider text-ink-faint">
+              The three judgement calls
+            </h3>
+            <ol className="space-y-2">
+              {DECISION_STEPS.map((step, index) => {
+                const href = `#defects/${step.target.code}`;
+                return (
+                  <li key={href} className="flex gap-3">
+                    <span
+                      aria-hidden="true"
+                      className="mt-0.5 w-4 shrink-0 font-mono text-xs tabular-nums text-ink-faint"
+                    >
+                      {index + 1}
+                    </span>
+                    <p className="text-sm leading-relaxed text-ink-dim">
+                      <a
+                        href={href}
+                        onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                          e.preventDefault();
+                          onSelectDefect(step.target.code);
+                        }}
+                        className="font-medium text-accent hover:underline"
+                      >
+                        {step.label}
+                      </a>{" "}
+                      <span className="text-ink-faint">—</span> {step.detail}
+                    </p>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+
+          <div className="space-y-2 pt-3 border-t border-line/60">
+            <h3 className="text-2xs font-mono font-semibold uppercase tracking-wider text-ink-faint">
+              Then verify them in the data
+            </h3>
+            <ol className="space-y-2">
+              {VERIFICATION_STEPS.map((step, index) => {
+                const href = `#${step.target.view}`;
+                return (
+                  <li key={href} className="flex gap-3">
+                    <span
+                      aria-hidden="true"
+                      className="mt-0.5 w-4 shrink-0 font-mono text-xs tabular-nums text-ink-faint"
+                    >
+                      {index + 4}
+                    </span>
+                    <p className="text-sm leading-relaxed text-ink-dim">
+                      <a
+                        href={href}
+                        onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                          if (onSelectView) {
+                            e.preventDefault();
+                            onSelectView(step.target.view);
+                          }
+                        }}
+                        className="font-medium text-accent hover:underline"
+                      >
+                        {step.label}
+                      </a>{" "}
+                      <span className="text-ink-faint">—</span> {step.detail}
+                    </p>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        </div>
 
         {/* Prominent 3-Step Reviewer Loop Box */}
         <div className="mt-6 rounded-lg border border-accent/30 bg-accent/5 p-4">
@@ -619,7 +655,7 @@ export default function Overview({
       <section aria-labelledby="critical-heading">
         <SectionHeader
           title="Critical findings"
-          subtitle="The four defects where naive handling destroys ledger truth. Click any defect code or decision row to jump directly to the verified code and interactive inspector."
+          subtitle="Ranked by pipeline severity (ST-02, PR-02, TX-01, TX-03) where naive handling destroys ledger truth — distinct from the three judgement calls above (TX-03, PR-02, ST-03), which required domain decision-making rather than mechanical recovery. Click any row to jump to code."
         />
         <h3 id="critical-heading" className="sr-only">
           Critical findings
