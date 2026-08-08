@@ -1338,17 +1338,22 @@ export default function ChatAssistant({
           {/* Persona Switcher Toggle Bar */}
           <div className="border-b border-line bg-panel/70 px-5 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">
-                Copilot Persona:
-              </span>
-              <div className="flex items-center rounded-lg border border-line bg-raised p-0.5">
+              <div className="flex items-center gap-2">
+                <span className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">
+                  Copilot Mode:
+                </span>
+                <span className="text-3xs rounded bg-accent/15 px-2 py-0.5 font-mono font-semibold text-accent border border-accent/30">
+                  {persona === "plain_english" ? "👔 Plain English Active" : "🛠️ Architect Active"}
+                </span>
+              </div>
+              <div className="flex items-center rounded-lg border border-line bg-raised p-0.5 shadow-xs">
                 <button
                   type="button"
                   onClick={() => setPersona("plain_english")}
                   className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all ${
                     persona === "plain_english"
-                      ? "bg-accent text-accent-contrast shadow-sm"
-                      : "text-ink-dim hover:text-ink hover:bg-panel"
+                      ? "bg-accent text-accent-contrast shadow-sm font-semibold"
+                      : "text-ink-dim hover:text-ink hover:bg-panel border border-transparent"
                   }`}
                   title="Plain English / Executive mode: Simple business takeaways, financial impact, and zero engineering jargon"
                 >
@@ -1360,8 +1365,8 @@ export default function ChatAssistant({
                   onClick={() => setPersona("architect")}
                   className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all ${
                     persona === "architect"
-                      ? "bg-accent text-accent-contrast shadow-sm"
-                      : "text-ink-dim hover:text-ink hover:bg-panel"
+                      ? "bg-accent text-accent-contrast shadow-sm font-semibold"
+                      : "text-ink-dim hover:text-ink hover:bg-panel border border-transparent"
                   }`}
                   title="Staff Data Architect mode: Deep technical specs, SQL constraints, schema details, and lineage tracing"
                 >
@@ -1370,10 +1375,10 @@ export default function ChatAssistant({
                 </button>
               </div>
             </div>
-            <p className="mt-1 text-3xs text-ink-faint">
+            <p className="mt-1.5 text-3xs text-ink-faint">
               {persona === "plain_english"
-                ? "👔 Explains business value, financial protections, and data quality decisions without technical jargon."
-                : "🛠️ Deep technical dive with schema constraints, SQL definitions, code refs, and lineage tracing."}
+                ? "👔 Plain English / Executive: Explains business value, financial protections, and data quality decisions without engineering jargon."
+                : "🛠️ Staff Data Architect: Deep technical dive with schema constraints, SQL definitions, code refs, and lineage tracing."}
             </p>
           </div>
 

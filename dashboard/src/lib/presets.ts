@@ -598,6 +598,7 @@ export const PAGE_PROMPTS: Record<string, PagePrompt[]> = {
   assistant: [
     { chip: "What can you answer?", question: "What material are you grounded on, and what kinds of question can you answer from it?", scriptedHint: "Run summary" },
     { chip: "Plain English summary", question: "Explain what this data pipeline does and why its decisions matter in plain English for business stakeholders.", scriptedHint: "Run summary" },
+    { chip: "Architect technical deep-dive", question: "Provide a Staff Data Architect technical breakdown: star schema design, constraint enforcement, zero-drift reconciliation, and deterministic defect resolution.", scriptedHint: "Run summary" },
   ],
 };
 
