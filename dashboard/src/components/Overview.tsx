@@ -283,6 +283,7 @@ export default function Overview({
             <Badge tone="ok">{formatInt(metricCount)} SQL metrics</Badge>
           </div>
         </div>
+      </section>
 
       {/* ── Verifying this yourself ──────────────────────────────────────────
           Retoned, not removed: the audience is a senior data engineer, and the
