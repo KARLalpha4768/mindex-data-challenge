@@ -32,7 +32,18 @@ export default function SchemaView({
       />
 
       <ExecutiveCallout title="Why a star schema with surrogate keys">
-        Modeled as 1 Fact table (<code className="font-mono text-ink">fact_sales</code>) surrounded by 4 Conformed Dimensions (<code className="font-mono text-ink">dim_date</code>, <code className="font-mono text-ink">dim_store</code>, <code className="font-mono text-ink">dim_product</code>, <code className="font-mono text-ink">dim_customer</code>). Uses <strong>surrogate integer primary keys</strong> to isolate historical facts from unstable source keys, and locks in the transaction grain once with DDL check constraints.
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            Modeled as 1 Fact table (<code className="font-mono text-ink">fact_sales</code>) surrounded by 4 Conformed Dimensions (<code className="font-mono text-ink">dim_date</code>, <code className="font-mono text-ink">dim_store</code>, <code className="font-mono text-ink">dim_product</code>, <code className="font-mono text-ink">dim_customer</code>). Uses <strong>surrogate integer primary keys</strong> to isolate historical facts from unstable source keys, and locks in the transaction grain once with DDL check constraints.
+          </div>
+          <a
+            href="#sql"
+            className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/20"
+          >
+            <span>⚡</span>
+            <span>Query Tables in SQL Playground</span>
+          </a>
+        </div>
       </ExecutiveCallout>
 
       {/* ── Visual ERD Diagram ─────────────────────────────────────────── */}

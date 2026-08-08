@@ -3,6 +3,7 @@
 import React from "react";
 
 import { Badge, EmptyState, SectionHeader, SeverityBadge, Stat, TableWrap } from "@/components/ui";
+import RevenueSimulator from "@/components/RevenueSimulator";
 import { SEVERITY_ORDER, type ViewId } from "@/lib/config";
 import { formatCurrency, formatInt } from "@/lib/format";
 import { type Bundle, type DefectView, resolveCleanedCounts } from "@/lib/types";
@@ -261,6 +262,11 @@ export default function Overview({
             </div>
           </div>
         </div>
+      </section>
+
+      {/* ── Interactive What-If Revenue & Governance Simulator ─────────── */}
+      <section aria-labelledby="simulator-heading" className="space-y-4">
+        <RevenueSimulator />
       </section>
 
       {/* ── Executive Architecture & Verification Briefing ──────────────── */}

@@ -90,9 +90,20 @@ export default function Analytics({
         />
 
         <ExecutiveCallout title="Why the metrics are SQL, not pandas">
-          All 6 business intelligence metrics are executed in <strong>declarative SQL</strong> directly against the 
-          SQLite warehouse (<code className="font-mono text-ink">output/warehouse.db</code>). Metrics lead with explicit definition notes, 
-          use database indexes for sub-millisecond execution, and prove a <strong>$0.00 revenue reconciliation delta</strong> across 474 fact sales rows.
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              All 6 business intelligence metrics are executed in <strong>declarative SQL</strong> directly against the 
+              SQLite warehouse (<code className="font-mono text-ink">output/warehouse.db</code>). Metrics lead with explicit definition notes, 
+              use database indexes for sub-millisecond execution, and prove a <strong>$0.00 revenue reconciliation delta</strong> across 474 fact sales rows.
+            </div>
+            <a
+              href="#sql"
+              className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/20"
+            >
+              <span>⚡</span>
+              <span>Open SQL Playground</span>
+            </a>
+          </div>
         </ExecutiveCallout>
 
         {/* Executive BI KPI Headline Banner */}

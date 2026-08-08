@@ -4,13 +4,16 @@ import React from "react";
 
 import Analytics from "@/components/Analytics";
 import ChatAssistant from "@/components/ChatAssistant";
+import CommandPalette from "@/components/CommandPalette";
 import DataProfile from "@/components/DataProfile";
 import DefectExplorer from "@/components/DefectExplorer";
+import ExportCenterModal from "@/components/ExportCenterModal";
 import InterviewerGuideModal from "@/components/InterviewerGuideModal";
 import Lineage from "@/components/Lineage";
 import Overview from "@/components/Overview";
 import RawVsCleanInspector, { type InspectorSelection } from "@/components/RawVsCleanInspector";
 import SchemaView from "@/components/SchemaView";
+import SqlSandbox from "@/components/SqlSandbox";
 import TestResults from "@/components/TestResults";
 import { Badge, CopyButton } from "@/components/ui";
 import { VIEWS, type ViewId } from "@/lib/config";
@@ -146,6 +149,28 @@ export default function Dashboard({
   // Reading location during render would be a hydration mismatch.
   const [route, setRoute] = React.useState<Route>(DEFAULT_ROUTE);
   const [showGuide, setShowGuide] = React.useState(false);
+  const [showCommandPalette, setShowCommandPalette] = React.useState(false);
+  const [showExportCenter, setShowExportCenter] = React.useState(false);
+
+  /**
+   * Global Keyboard Shortcuts (Cmd+K / Ctrl+K / slash)
+   */
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommandPalette((prev) => !prev);
+      } else if (
+        e.key === "/" &&
+        !["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement)?.tagName)
+      ) {
+        e.preventDefault();
+        setShowCommandPalette(true);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   /**
    * The dataset the Raw vs Clean inspector is showing.
@@ -219,7 +244,18 @@ export default function Dashboard({
    * because the Overview happened to be scrolled there is disorienting in a way
    * that reads as a bug. The anchors keep their hrefs regardless, so
    * middle-click and "open in new tab" still work. */
-  const goToView = React.useCallback((view: ViewId) => navigate({ view }), [navigate]);
+  const goToView = React.useCallback(
+    (view: ViewId, param?: string) => {
+      if (view === "profile" && param?.startsWith("dataset:")) {
+        navigate({ view: "profile", dataset: param.replace("dataset:", "") });
+      } else if (view === "analytics" && param?.startsWith("metric:")) {
+        navigate({ view: "analytics", metric: param.replace("metric:", "") });
+      } else {
+        navigate({ view });
+      }
+    },
+    [navigate],
+  );
 
   /**
    * What the assistant is told about where the reviewer is.
@@ -309,8 +345,29 @@ export default function Dashboard({
             <div className="flex flex-wrap items-center gap-2 text-2xs">
               <button
                 type="button"
+                onClick={() => setShowCommandPalette(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-line bg-raised/80 px-2.5 py-1 text-2xs text-ink-dim hover:border-line-strong hover:text-ink transition-colors"
+                title="Quick Search & Navigation (Cmd+K / Ctrl+K)"
+              >
+                <span>🔍</span>
+                <span className="hidden sm:inline">Search</span>
+                <kbd className="rounded border border-line bg-base px-1.5 py-0.2 font-mono text-[10px] text-ink-faint">
+                  ⌘K
+                </kbd>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowExportCenter(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1 font-mono text-2xs font-semibold text-accent transition-colors hover:bg-accent/20"
+                title="Export clean CSVs, quarantine records, and reports"
+              >
+                <span>📥</span>
+                <span className="hidden sm:inline">Export</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowGuide(true)}
-                className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 font-mono text-2xs font-semibold text-accent transition-colors hover:bg-accent/20"
+                className="rounded border border-line bg-raised px-2.5 py-1 font-mono text-2xs font-semibold text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
               >
                 Interviewer guide
               </button>
@@ -450,6 +507,8 @@ export default function Dashboard({
 
         {route.view === "analytics" && <Analytics bundle={bundle} focusMetric={route.metric} />}
 
+        {route.view === "sql" && <SqlSandbox bundle={bundle} />}
+
         {route.view === "tests" && <TestResults bundle={bundle} />}
 
         {route.view === "raw" && (
@@ -490,6 +549,24 @@ export default function Dashboard({
       )}
 
       <InterviewerGuideModal isOpen={showGuide} onClose={() => setShowGuide(false)} />
+
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        bundle={bundle}
+        defects={defects}
+        onNavigateView={goToView}
+        onNavigateDefect={goToDefect}
+        onOpenEvaluatorGuide={() => setShowGuide(true)}
+        onOpenExportCenter={() => setShowExportCenter(true)}
+      />
+
+      <ExportCenterModal
+        isOpen={showExportCenter}
+        onClose={() => setShowExportCenter(false)}
+        bundle={bundle}
+        defects={defects}
+      />
 
       <footer className="border-t border-line px-4 py-6 sm:px-6">
         <div className="mx-auto flex max-w-screen flex-wrap items-center justify-between gap-3 text-2xs text-ink-faint">

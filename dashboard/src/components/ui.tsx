@@ -53,10 +53,12 @@ export function Badge({
   children,
   tone = "neutral",
   title,
+  className = "",
 }: {
   children: React.ReactNode;
   tone?: "neutral" | "accent" | "ok" | "warn" | "bad" | "mono";
   title?: string;
+  className?: string;
 }) {
   const tones: Record<string, string> = {
     neutral: "border-line bg-raised text-ink-dim",
@@ -69,7 +71,7 @@ export function Badge({
   return (
     <span
       title={title}
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-2xs ${tones[tone]}`}
+      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-2xs ${tones[tone]} ${className}`}
     >
       {children}
     </span>

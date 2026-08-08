@@ -150,6 +150,7 @@ export const VIEWS = [
   { id: "lineage", label: "Lineage", group: "detail" },
   { id: "schema", label: "Schema", group: "detail" },
   { id: "analytics", label: "Analytics", group: "detail" },
+  { id: "sql", label: "SQL Sandbox", group: "detail" },
   { id: "tests", label: "Validation & Tests", group: "detail" },
 ] as const;
 

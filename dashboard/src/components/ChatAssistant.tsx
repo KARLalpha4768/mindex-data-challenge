@@ -99,6 +99,8 @@ interface Message {
   id: string;
   source: MessageSource;
   text: string;
+  plainEnglishText?: string;
+  architectText?: string;
   /** Honest one-line provenance, e.g. "offline mode — scripted answer". */
   sourceNote?: string;
   defectCode?: string;
@@ -106,6 +108,7 @@ interface Message {
   codeSnippet?: string;
   codeAnnotations?: CodeAnnotation[];
   talkingPoints?: string[];
+  plainEnglishTalkingPoints?: string[];
   /** What the server retrieved, surfaced so retrieval is inspectable. */
   contextNote?: string;
   /** Active persona mode used for this response. */
@@ -613,6 +616,13 @@ export default function ChatAssistant({
   const [modelName, setModelName] = React.useState<string>("");
   const [isSending, setIsSending] = React.useState(false);
   const [persona, setPersona] = React.useState<CopilotPersona>("plain_english");
+  /** Per-message persona override map for immediate in-place toggling on answer cards */
+  const [messagePersonas, setMessagePersonas] = React.useState<Record<string, CopilotPersona>>({});
+
+  const toggleMessagePersona = React.useCallback((messageId: string, targetPersona: CopilotPersona) => {
+    setMessagePersonas((prev) => ({ ...prev, [messageId]: targetPersona }));
+    setPersona(targetPersona);
+  }, []);
 
   /**
    * The one failure the reviewer must not have to diagnose.
@@ -743,11 +753,36 @@ export default function ChatAssistant({
       id: "init",
       source: "system",
       text:
-        "Welcome to the Pipeline Copilot.\n\n" +
-        "You can toggle between two modes above:\n" +
-        "• 👔 Plain English / Executive: Simple, jargon-free business explanations and financial protections.\n" +
-        "• 🛠️ Staff Data Architect: Technical specs, SQL definitions, SQLite constraints, and lineage tracing.\n\n" +
-        "Answers are grounded on the verbatim pipeline bundle (17 defect classes, revenue reconciliation, star schema, and SQL metrics). Every numerical figure is mathematically verified against the underlying run data.",
+        "Welcome to Pipeline Copilot.\n\n" +
+        "You can switch any answer below between Plain English and Staff Data Architect using the toggle directly on the answer card.\n\n" +
+        "• 👔 Plain English / Executive: Simple, jargon-free business explanations, financial impact, and revenue protections.\n" +
+        "• 🛠️ Staff Data Architect: Deep technical specs, SQL constraints, SQLite star schema details, and lineage tracing.\n\n" +
+        "All answers are grounded on the audited pipeline bundle ($158,044.29 net revenue, 17 defect classes, zero FK violations).",
+      plainEnglishText:
+        "Welcome to Pipeline Copilot (Executive View).\n\n" +
+        "This assistant provides plain English insights into your retail data pipeline:\n" +
+        "• Net Sales Revenue: $158,044.29 accurately verified with $0.00 discrepancy\n" +
+        "• Promotional Discounts: $1,104.05 protected across 20 promotional orders\n" +
+        "• Clean Transactions: 474 valid sales loaded from 505 raw entries\n" +
+        "• Quarantined Records: 31 invalid or future-dated rows safely isolated\n" +
+        "• Quality Coverage: All 17 defect classes resolved\n\n" +
+        "Use the toggle buttons directly on any answer card to switch between Plain English and Staff Architect views.",
+      architectText:
+        "Welcome to Pipeline Copilot (Staff Data Architect View).\n\n" +
+        "Pipeline Architecture & Ingest Specifications:\n" +
+        "• Warehouse Model: Star Schema (dim_date [365], dim_store [8], dim_product [14], dim_customer [20], fact_sales [474])\n" +
+        "• Relational Constraints: FK enforcement active, 0 orphaned surrogate keys, 0 NULL customer references\n" +
+        "• Ingest Engine: Python 3.11 + SQLite 3 / DuckDB in-memory analytical warehouse\n" +
+        "• Defect Coverage: 17/17 catalog classes resolved via 3-stage deterministic survivorship\n" +
+        "• Revenue Reconciliation: Gross List ($170,816.34) - Discount ($1,104.05) + Returns (-$11,668.00) = Net Revenue ($158,044.29) with $0.00 tie-out delta.",
+      plainEnglishTalkingPoints: [
+        "Plain English mode active: explanations are tailored for business and non-technical stakeholders.",
+        "Toggle any answer at any time to inspect deep technical architecture details.",
+      ],
+      talkingPoints: [
+        "Staff Architect mode active: full schema, SQL, and line-level code annotations exposed.",
+        "Toggle any answer at any time for high-level executive summaries.",
+      ],
       timestamp: now(),
     },
   ]);
@@ -841,6 +876,8 @@ export default function ChatAssistant({
           id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           source: "scripted",
           text: answer.answer,
+          plainEnglishText: answer.plainEnglishAnswer || answer.answer,
+          architectText: answer.answer,
           sourceNote: note,
           persona,
           defectCode: answer.defectCode || undefined,
@@ -848,6 +885,7 @@ export default function ChatAssistant({
           codeSnippet: answer.codeSnippet || undefined,
           codeAnnotations: answer.codeAnnotations?.length ? answer.codeAnnotations : undefined,
           talkingPoints: answer.talkingPoints,
+          plainEnglishTalkingPoints: answer.plainEnglishTalkingPoints,
           audit,
           timestamp: now(),
           isError,
@@ -1335,53 +1373,6 @@ export default function ChatAssistant({
             </div>
           </header>
 
-          {/* Persona Switcher Toggle Bar */}
-          <div className="border-b border-line bg-panel/70 px-5 py-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">
-                  Copilot Mode:
-                </span>
-                <span className="text-3xs rounded bg-accent/15 px-2 py-0.5 font-mono font-semibold text-accent border border-accent/30">
-                  {persona === "plain_english" ? "👔 Plain English Active" : "🛠️ Architect Active"}
-                </span>
-              </div>
-              <div className="flex items-center rounded-lg border border-line bg-raised p-0.5 shadow-xs">
-                <button
-                  type="button"
-                  onClick={() => setPersona("plain_english")}
-                  className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                    persona === "plain_english"
-                      ? "bg-accent text-accent-contrast shadow-sm font-semibold"
-                      : "text-ink-dim hover:text-ink hover:bg-panel border border-transparent"
-                  }`}
-                  title="Plain English / Executive mode: Simple business takeaways, financial impact, and zero engineering jargon"
-                >
-                  <span>👔</span>
-                  <span>Plain English / Executive</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPersona("architect")}
-                  className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all ${
-                    persona === "architect"
-                      ? "bg-accent text-accent-contrast shadow-sm font-semibold"
-                      : "text-ink-dim hover:text-ink hover:bg-panel border border-transparent"
-                  }`}
-                  title="Staff Data Architect mode: Deep technical specs, SQL constraints, schema details, and lineage tracing"
-                >
-                  <span>🛠️</span>
-                  <span>Staff Data Architect</span>
-                </button>
-              </div>
-            </div>
-            <p className="mt-1.5 text-3xs text-ink-faint">
-              {persona === "plain_english"
-                ? "👔 Plain English / Executive: Explains business value, financial protections, and data quality decisions without engineering jargon."
-                : "🛠️ Staff Data Architect: Deep technical dive with schema constraints, SQL definitions, code refs, and lineage tracing."}
-            </p>
-          </div>
-
           {/* The rejected-key banner */}
           {keyRejected && (
             <div className="border-b border-bad/50 bg-bad/10 px-5 py-3 text-2xs leading-relaxed text-ink">
@@ -1408,45 +1399,87 @@ export default function ChatAssistant({
               <summary className="cursor-pointer text-2xs text-ink-faint hover:text-accent">
                 model selection —{" "}
                 {resolution.selected
-                  ? `answering with ${resolution.selected}`
-                  : `${resolution.candidates.length} candidate${resolution.candidates.length === 1 ? "" : "s"} queued`}
-                {resolution.transport && ` over ${transportLabel(resolution.transport)}`}
-                {resolution.skipped.length > 0 && `, ${resolution.skipped.length} skipped`}
+                  ? `answered by ${resolution.selected}`
+                  : "offline; bundle-derived answers"}
+                {resolution.transport
+                  ? ` via ${transportLabel(resolution.transport)}`
+                  : ""}
+                {resolution.attempts.length > 0
+                  ? ` (${resolution.attempts.length} attempts)`
+                  : ""}
+                {" · "}
+                <span className="underline">inspect</span>
               </summary>
-              <div className="mt-2 space-y-1 font-mono text-2xs leading-relaxed text-ink-dim">
-                {resolution.requested && <p>GEMINI_MODEL override: {resolution.requested}</p>}
-                {resolution.transports && resolution.transports.length > 0 && (
-                  <p>transports: {resolution.transports.join(" → ")}</p>
-                )}
-                {resolution.transportNote && <p>{resolution.transportNote}</p>}
-                <p>preference: {resolution.preference.join(" → ")}</p>
-                <p>tried in order: {resolution.candidates.join(" → ")}</p>
+              <div className="mt-2 space-y-2 font-mono text-2xs text-ink-dim">
                 <p>
-                  discovery ({resolution.discovery}): {resolution.discoveryNote}
+                  <span className="font-semibold text-ink">Preference order: </span>
+                  {resolution.preference.join(" → ")}
                 </p>
-                {resolution.unavailable.length > 0 && (
-                  <p>not reported by ListModels for this key: {resolution.unavailable.join(", ")}</p>
+                {resolution.candidates.length > 0 && (
+                  <p>
+                    <span className="font-semibold text-ink">
+                      Models this key project can use ({resolution.candidates.length}):{" "}
+                    </span>
+                    {resolution.candidates.join(", ")}
+                  </p>
+                )}
+                {resolution.skipped.length > 0 && (
+                  <p className="text-warn">
+                    <span className="font-semibold">Skipped (retired or not permitted): </span>
+                    {resolution.skipped.join(", ")}
+                  </p>
                 )}
                 {resolution.attempts.length > 0 && (
-                  <ul className="list-inside list-disc">
-                    {resolution.attempts.map((a, i) => (
-                      <li key={i}>
-                        {a.model}
-                        {a.transport ? ` (${a.transport})` : ""} — {a.outcome}
-                        {a.status !== undefined ? ` (HTTP ${a.status})` : ""} after {a.attempts}{" "}
-                        attempt{a.attempts === 1 ? "" : "s"}: {a.reason}
-                      </li>
-                    ))}
-                  </ul>
+                  <div>
+                    <span className="font-semibold text-ink">Attempt trace:</span>
+                    <ul className="mt-1 list-inside list-disc space-y-1">
+                      {resolution.attempts.map((a, i) => (
+                        <li key={i}>
+                          <span className="font-semibold">{a.model}</span>: {a.outcome}
+                          {a.transport ? ` via ${transportLabel(a.transport)}` : ""}
+                          {a.status !== undefined ? ` (HTTP ${a.status})` : ""}
+                          {a.reason ? ` — ${a.reason}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {resolution.selected && (
+                  <p className="text-ok">
+                    <span className="font-semibold">Resolved model: </span>
+                    {resolution.selected}
+                  </p>
+                )}
+                {resolution.transports && (
+                  <p className="text-ink-faint">
+                    <span className="font-semibold text-ink">Supported endpoints: </span>
+                    {resolution.transports.map((t) => transportLabel(t)).join(", ")}
+                  </p>
+                )}
+                {resolution.transportNote && (
+                  <p className="text-ink-faint italic">{resolution.transportNote}</p>
                 )}
               </div>
             </details>
           )}
 
-          {/* Offline explainer */}
+          {/* Context Dossier Info Strip */}
+          {selectionLabel && (
+            <div className="flex items-center justify-between gap-2 border-b border-line bg-accent/5 px-5 py-2 text-2xs">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-accent">Focused Cell:</span>
+                <span className="font-mono text-ink">{selectionLabel}</span>
+              </div>
+              <span className="text-3xs text-ink-faint">
+                Copilot includes row defect flags in prompt context
+              </span>
+            </div>
+          )}
+
+          {/* Offline info banner */}
           {mode === "offline" && !keyRejected && (
-            <div className="border-b border-line bg-warn/5 px-5 py-2 text-2xs leading-relaxed text-ink-dim">
-              <span className="font-semibold text-warn">Offline mode.</span> Answers assembled from{" "}
+            <div className="border-b border-line bg-raised/50 px-5 py-2 text-2xs text-ink-dim">
+              Operating offline — answers are derived deterministically from{" "}
               <code className="font-mono">bundle.json</code> — the pipeline&apos;s own audited output.
             </div>
           )}
@@ -1610,243 +1643,353 @@ export default function ChatAssistant({
 
           {/* Transcript Area - Maximized vertical and horizontal reading space */}
           <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6 text-sm leading-relaxed">
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                className={`flex flex-col ${m.source === "user" ? "items-end" : "items-start w-full"}`}
-              >
-                <div className="mb-1.5 flex items-center gap-2 text-2xs text-ink-faint">
-                  <span>
-                    {m.source === "user" ? "You" : "Pipeline Copilot"}
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>{m.timestamp}</span>
-                  {m.source === "gemini" && <Badge tone="accent">model</Badge>}
-                  {m.source === "scripted" && (
-                    <Badge tone={m.isError ? "warn" : "neutral"}>scripted</Badge>
-                  )}
-                  {m.source !== "user" && (
-                    <span className="rounded bg-raised px-1.5 py-0.5 text-3xs font-medium text-ink-dim border border-line">
-                      {m.persona === "architect" ? "🛠️ Architect" : "👔 Plain English"}
-                    </span>
-                  )}
-                </div>
+            {messages.map((m) => {
+              const activeMsgPersona: CopilotPersona =
+                messagePersonas[m.id] ?? m.persona ?? persona;
 
+              return (
                 <div
-                  className={`w-full space-y-4 rounded-xl p-4 sm:p-5 transition-all ${
-                    m.source === "user"
-                      ? "max-w-[85%] border border-accent/20 bg-accent/10 text-ink"
-                      : "border border-line bg-raised/90 text-ink shadow-sm"
-                  }`}
+                  key={m.id}
+                  className={`flex flex-col ${m.source === "user" ? "items-end" : "items-start w-full"}`}
                 >
-                  {/* Top provenance & action strip for Assistant messages */}
-                  {m.source !== "user" && (
-                    <div className="flex items-center justify-between gap-2 border-b border-line/40 pb-2">
-                      <div className="flex items-center gap-2">
-                        {m.sourceNote && (
-                          <p className="text-2xs italic text-ink-faint">{m.sourceNote}</p>
+                  <div className="mb-1.5 flex items-center gap-2 text-2xs text-ink-faint">
+                    <span>
+                      {m.source === "user" ? "You" : "Pipeline Copilot"}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>{m.timestamp}</span>
+                    {m.source === "gemini" && <Badge tone="accent">model</Badge>}
+                    {m.source === "scripted" && (
+                      <Badge tone={m.isError ? "warn" : "neutral"}>scripted</Badge>
+                    )}
+                  </div>
+
+                  <div
+                    className={`w-full space-y-4 rounded-xl p-4 sm:p-5 transition-all ${
+                      m.source === "user"
+                        ? "max-w-[85%] border border-accent/20 bg-accent/10 text-ink"
+                        : "border border-line bg-raised/90 text-ink shadow-sm"
+                    }`}
+                  >
+                    {/* Persona Toggle Bar embedded DIRECTLY ON the generated response card */}
+                    {m.source !== "user" && m.source !== "pending" && (
+                      <div className="flex items-center justify-between gap-2 border-b border-line/60 pb-3 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">
+                            Persona Mode:
+                          </span>
+                          <div className="flex items-center rounded-lg border border-line bg-panel p-0.5 shadow-xs">
+                            <button
+                              type="button"
+                              onClick={() => toggleMessagePersona(m.id, "plain_english")}
+                              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-2xs font-medium transition-all ${
+                                activeMsgPersona === "plain_english"
+                                  ? "bg-accent text-accent-contrast shadow-sm font-semibold"
+                                  : "text-ink-dim hover:text-ink hover:bg-raised"
+                              }`}
+                              title="Toggle this answer to Plain English / Executive"
+                            >
+                              <span>👔</span>
+                              <span>Plain English</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleMessagePersona(m.id, "architect")}
+                              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-2xs font-medium transition-all ${
+                                activeMsgPersona === "architect"
+                                  ? "bg-accent text-accent-contrast shadow-sm font-semibold"
+                                  : "text-ink-dim hover:text-ink hover:bg-raised"
+                              }`}
+                              title="Toggle this answer to Staff Data Architect"
+                            >
+                              <span>🛠️</span>
+                              <span>Staff Architect</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {m.sourceNote && (
+                            <p className="text-3xs italic text-ink-faint hidden md:inline">{m.sourceNote}</p>
+                          )}
+                          <div className="flex items-center gap-1 rounded bg-panel/80 px-2 py-0.5 text-3xs text-ink-dim border border-line/50 font-mono">
+                            <span className="font-semibold text-accent">Grounded:</span>
+                            <span>bundle.json</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedMessageId(expandedMessageId === m.id ? null : m.id)}
+                            className="text-2xs font-mono text-ink-faint hover:text-accent transition-colors"
+                            title={expandedMessageId === m.id ? "Standard size" : "Expand answer card"}
+                          >
+                            {expandedMessageId === m.id ? "⤡ Standard" : "⤢ Expand"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Numeric self-audit */}
+                    {m.audit && <AuditNote audit={m.audit} />}
+
+                    {m.source === "pending" ? (
+                      <p className="flex items-center gap-2 text-sm text-ink-dim">
+                        <span
+                          className="h-2 w-2 animate-pulse rounded-full bg-accent"
+                          aria-hidden="true"
+                        />
+                        {m.text}
+                      </p>
+                    ) : (
+                      (() => {
+                        const displayText =
+                          activeMsgPersona === "plain_english"
+                            ? (m.plainEnglishText || (m.text.includes("---DEEPER_ANALYSIS---") ? m.text.split("---DEEPER_ANALYSIS---")[0].trim() : m.text))
+                            : (m.architectText || m.text);
+
+                        const displayPoints =
+                          activeMsgPersona === "plain_english"
+                            ? (m.plainEnglishTalkingPoints && m.plainEnglishTalkingPoints.length > 0 ? m.plainEnglishTalkingPoints : m.talkingPoints)
+                            : m.talkingPoints;
+
+                        return (
+                          <>
+                            {displayText.includes("---DEEPER_ANALYSIS---") ? (
+                              <div className="text-sm leading-relaxed space-y-3">
+                                <div className="rounded-lg border border-accent/30 bg-panel/60 p-4">
+                                  <div className="mb-2 flex items-center gap-1.5 text-2xs font-bold uppercase tracking-wider text-accent">
+                                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-contrast text-3xs font-mono">
+                                      ✓
+                                    </span>
+                                    <span>
+                                      {activeMsgPersona === "architect"
+                                        ? "Executive Summary (Technical Architecture)"
+                                        : "Plain English Takeaway (Executive Summary)"}
+                                    </span>
+                                  </div>
+                                  <div className="whitespace-pre-wrap text-sm text-ink leading-relaxed">
+                                    <LinkedText
+                                      text={displayText.split("---DEEPER_ANALYSIS---")[0].trim()}
+                                      knownCodes={knownCodes}
+                                      onSelectDefect={onSelectDefect}
+                                    />
+                                  </div>
+                                </div>
+
+                                <details
+                                  className="rounded-lg border border-line/80 bg-panel/80 p-4 transition-colors hover:border-accent/50"
+                                  open={activeMsgPersona === "architect"}
+                                >
+                                  <summary className="cursor-pointer flex items-center justify-between font-semibold text-accent text-xs">
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="font-mono text-2xs">▶</span>
+                                      <span>
+                                        {activeMsgPersona === "architect"
+                                          ? "Extended Deep Analysis & Technical Evidence"
+                                          : "📊 Business & Operational Details"}
+                                      </span>
+                                    </span>
+                                    <span className="text-2xs font-normal text-ink-faint">
+                                      {activeMsgPersona === "architect" ? "Technical Breakdown" : "Business Context"}
+                                    </span>
+                                  </summary>
+                                  <div className="mt-3 border-t border-line/60 pt-3 whitespace-pre-wrap text-xs text-ink-dim leading-relaxed">
+                                    <LinkedText
+                                      text={displayText.split("---DEEPER_ANALYSIS---")[1].trim()}
+                                      knownCodes={knownCodes}
+                                      onSelectDefect={onSelectDefect}
+                                    />
+                                  </div>
+                                </details>
+                              </div>
+                            ) : (
+                              <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                                <LinkedText
+                                  text={displayText}
+                                  knownCodes={knownCodes}
+                                  onSelectDefect={onSelectDefect}
+                                />
+                              </div>
+                            )}
+
+                            {/* Talking points */}
+                            {displayPoints && displayPoints.length > 0 && (
+                              <div className="space-y-2 rounded-lg border border-line/60 bg-panel/60 p-3.5">
+                                <p className="text-2xs font-semibold uppercase tracking-wider text-accent">
+                                  {activeMsgPersona === "plain_english" ? "👔 Executive Key Takeaways" : "🛠️ From the Audit Ledger"}
+                                </p>
+                                <ul className="list-inside list-disc space-y-1.5 text-xs leading-relaxed text-ink-dim">
+                                  {displayPoints.map((tp, i) => (
+                                    <li key={i}>{tp}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {/* Technical code snippet and annotations */}
+                            {m.codeSnippet && activeMsgPersona === "architect" && (
+                              <div className="space-y-3 pt-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-2xs font-semibold uppercase tracking-wider text-accent">
+                                    Source, as it is in the repository
+                                  </p>
+                                  <CopyButton text={m.codeSnippet} label="Copy" copiedLabel="Copied" />
+                                </div>
+                                <pre className="overflow-x-auto rounded border border-line bg-panel p-3.5 font-mono text-xs leading-relaxed text-ink-dim">
+                                  <code>{m.codeSnippet}</code>
+                                </pre>
+
+                                {m.codeAnnotations && m.codeAnnotations.length > 0 && (
+                                  <div className="space-y-2">
+                                    <p className="text-2xs font-semibold uppercase tracking-wider text-accent">
+                                      Tag sites
+                                    </p>
+                                    {m.codeAnnotations.map((anno, idx) => (
+                                      <div
+                                        key={idx}
+                                        className="rounded border border-line bg-panel/40 p-2.5 text-xs"
+                                      >
+                                        <div className="mb-1 flex items-center justify-between gap-2">
+                                          <span className="font-mono text-2xs font-semibold text-accent">
+                                            {anno.lineRange}
+                                          </span>
+                                          <span className="text-xs font-semibold text-ink">{anno.title}</span>
+                                        </div>
+                                        <p className="font-mono text-2xs leading-relaxed text-ink-dim">
+                                          {anno.description}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* When in plain english mode and code snippet exists, provide clean optional technical inspection */}
+                            {m.codeSnippet && activeMsgPersona === "plain_english" && (
+                              <details className="rounded border border-line/60 bg-panel/30 p-2 text-2xs">
+                                <summary className="cursor-pointer text-ink-faint hover:text-accent font-mono">
+                                  🔍 Show underlying Python source code ({m.codeRef || "source"})
+                                </summary>
+                                <div className="mt-2 space-y-2">
+                                  <pre className="overflow-x-auto rounded border border-line bg-panel p-2 font-mono text-3xs leading-relaxed text-ink-dim">
+                                    <code>{m.codeSnippet}</code>
+                                  </pre>
+                                </div>
+                              </details>
+                            )}
+                          </>
+                        );
+                      })()
+                    )}
+
+                    {/* Context Note */}
+                    {m.contextNote && (
+                      <details className="rounded border border-line/60 bg-panel/60 p-2.5">
+                        <summary className="cursor-pointer text-2xs font-semibold uppercase tracking-wider text-ink-faint">
+                          Grounding context used
+                        </summary>
+                        <p className="mt-2 font-mono text-2xs leading-relaxed text-ink-dim">
+                          {m.contextNote}
+                        </p>
+                      </details>
+                    )}
+
+                    {(m.codeRef || canNavigate(m)) && (
+                      <div className="flex items-center justify-between gap-2 border-t border-line/40 pt-2 font-mono text-2xs">
+                        <span className="text-ink-dim truncate">{m.codeRef ? `Source Ref: ${m.codeRef}` : ""}</span>
+                        {canNavigate(m) && (
+                          <button
+                            type="button"
+                            onClick={() => handleNavigateToCode(m)}
+                            className="shrink-0 flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2.5 py-1 font-semibold text-accent transition-colors hover:bg-accent/20"
+                          >
+                            <span>Step 3:</span>
+                            <span>Defect Explorer & Linked Code →</span>
+                          </button>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="flex items-center gap-1.5 rounded bg-panel/80 px-2 py-0.5 text-3xs text-ink-dim border border-line/50 font-mono">
-                          <span className="font-semibold text-accent">Grounded:</span>
-                          <span>bundle.json</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setExpandedMessageId(expandedMessageId === m.id ? null : m.id)}
-                          className="text-2xs font-mono text-ink-faint hover:text-accent transition-colors"
-                          title={expandedMessageId === m.id ? "Standard size" : "Expand answer card"}
-                        >
-                          {expandedMessageId === m.id ? "⤡ Standard" : "⤢ Expand"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Numeric self-audit */}
-                  {m.audit && <AuditNote audit={m.audit} />}
-
-                  {m.source === "pending" ? (
-                    <p className="flex items-center gap-2 text-sm text-ink-dim">
-                      <span
-                        className="h-2 w-2 animate-pulse rounded-full bg-accent"
-                        aria-hidden="true"
-                      />
-                      {m.text}
-                    </p>
-                  ) : m.text.includes("---DEEPER_ANALYSIS---") ? (
-                    <div className="text-sm leading-relaxed space-y-3">
-                      <div className="rounded-lg border border-accent/30 bg-panel/60 p-4">
-                        <div className="mb-2 flex items-center gap-1.5 text-2xs font-bold uppercase tracking-wider text-accent">
-                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-accent-contrast text-3xs font-mono">
-                            ✓
-                          </span>
-                          <span>
-                            {m.persona === "architect"
-                              ? "Executive Summary (Technical Architecture)"
-                              : "Plain English Takeaway (Executive Summary)"}
-                          </span>
-                        </div>
-                        <div className="whitespace-pre-wrap text-sm text-ink leading-relaxed">
-                          <LinkedText
-                            text={m.text.split("---DEEPER_ANALYSIS---")[0].trim()}
-                            knownCodes={knownCodes}
-                            onSelectDefect={onSelectDefect}
-                          />
-                        </div>
-                      </div>
-
-                      <details
-                        className="rounded-lg border border-line/80 bg-panel/80 p-4 transition-colors hover:border-accent/50"
-                        open
-                      >
-                        <summary className="cursor-pointer flex items-center justify-between font-semibold text-accent text-xs">
-                          <span className="flex items-center gap-1.5">
-                            <span className="font-mono text-2xs">▶</span>
-                            <span>
-                              {m.persona === "architect"
-                                ? "Extended Deep Analysis & Technical Evidence"
-                                : "📊 Business & Operational Context"}
-                            </span>
-                          </span>
-                          <span className="text-2xs font-normal text-ink-faint">
-                            {m.persona === "architect" ? "Technical Breakdown" : "Business Breakdown"}
-                          </span>
-                        </summary>
-                        <div className="mt-3 border-t border-line/60 pt-3 whitespace-pre-wrap text-xs text-ink-dim leading-relaxed">
-                          <LinkedText
-                            text={m.text.split("---DEEPER_ANALYSIS---")[1].trim()}
-                            knownCodes={knownCodes}
-                            onSelectDefect={onSelectDefect}
-                          />
-                        </div>
-                      </details>
-                    </div>
-                  ) : (
-                    <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                      <LinkedText
-                        text={m.text}
-                        knownCodes={knownCodes}
-                        onSelectDefect={onSelectDefect}
-                      />
-                    </div>
-                  )}
-
-                  {m.talkingPoints && m.talkingPoints.length > 0 && (
-                    <div className="space-y-2 rounded-lg border border-line/60 bg-panel/60 p-3.5">
-                      <p className="text-2xs font-semibold uppercase tracking-wider text-accent">
-                        From the audit ledger
-                      </p>
-                      <ul className="list-inside list-disc space-y-1.5 text-xs leading-relaxed text-ink-dim">
-                        {m.talkingPoints.map((tp, i) => (
-                          <li key={i}>{tp}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {m.codeSnippet && (
-                    <div className="space-y-3 pt-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-2xs font-semibold uppercase tracking-wider text-accent">
-                          Source, as it is in the repository
-                        </p>
-                        <CopyButton text={m.codeSnippet} label="Copy" copiedLabel="Copied" />
-                      </div>
-                      <pre className="overflow-x-auto rounded border border-line bg-panel p-3.5 font-mono text-xs leading-relaxed text-ink-dim">
-                        <code>{m.codeSnippet}</code>
-                      </pre>
-
-                      {m.codeAnnotations && m.codeAnnotations.length > 0 && (
-                        <div className="space-y-2">
-                          <p className="text-2xs font-semibold uppercase tracking-wider text-accent">
-                            Tag sites
-                          </p>
-                          {m.codeAnnotations.map((anno, idx) => (
-                            <div
-                              key={idx}
-                              className="rounded border border-line bg-panel/40 p-2.5 text-xs"
-                            >
-                              <div className="mb-1 flex items-center justify-between gap-2">
-                                <span className="font-mono text-2xs font-semibold text-accent">
-                                  {anno.lineRange}
-                                </span>
-                                <span className="text-xs font-semibold text-ink">{anno.title}</span>
-                              </div>
-                              <p className="font-mono text-2xs leading-relaxed text-ink-dim">
-                                {anno.description}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Context Note */}
-                  {m.contextNote && (
-                    <details className="rounded border border-line/60 bg-panel/60 p-2.5">
-                      <summary className="cursor-pointer text-2xs font-semibold uppercase tracking-wider text-ink-faint">
-                        Grounding context used
-                      </summary>
-                      <p className="mt-2 font-mono text-2xs leading-relaxed text-ink-dim">
-                        {m.contextNote}
-                      </p>
-                    </details>
-                  )}
-
-                  {(m.codeRef || canNavigate(m)) && (
-                    <div className="flex items-center justify-between gap-2 border-t border-line/40 pt-2 font-mono text-2xs">
-                      <span className="text-ink-dim truncate">{m.codeRef ? `Source Ref: ${m.codeRef}` : ""}</span>
-                      {canNavigate(m) && (
-                        <button
-                          type="button"
-                          onClick={() => handleNavigateToCode(m)}
-                          className="shrink-0 flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2.5 py-1 font-semibold text-accent transition-colors hover:bg-accent/20"
-                        >
-                          <span>Step 3:</span>
-                          <span>Defect Explorer & Linked Code →</span>
-                        </button>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
 
-          <form onSubmit={handleSend} className="border-t border-line bg-raised p-4">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={inputQuery}
-                onChange={(e) => setInputQuery(e.target.value)}
-                maxLength={MAX_QUESTION_CHARS}
-                disabled={isSending}
-                placeholder={
-                  mode === "live"
-                    ? "Ask anything about the defects, the decisions or the metrics…"
-                    : "Ask offline — answers are matched against the bundle…"
-                }
-                className="flex-1 rounded-lg border border-line bg-panel px-4 py-2.5 text-xs text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none disabled:opacity-60"
-                aria-label="Question"
-              />
-              <button
-                type="submit"
-                disabled={isSending || inputQuery.trim() === ""}
-                className="rounded-lg bg-accent px-5 py-2.5 text-xs font-semibold text-panel transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isSending ? "Asking…" : "Send"}
-              </button>
+          {/* Sticky Next Question Mode Switcher & Input Form */}
+          <div className="border-t border-line bg-raised">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-line/40 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">
+                  Default Mode:
+                </span>
+                <div className="flex items-center rounded-lg border border-line bg-panel p-0.5 shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => setPersona("plain_english")}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
+                      persona === "plain_english"
+                        ? "bg-accent text-accent-contrast shadow-sm font-semibold"
+                        : "text-ink-dim hover:text-ink hover:bg-raised"
+                    }`}
+                    title="Plain English / Executive mode"
+                  >
+                    <span>👔</span>
+                    <span>Plain English</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPersona("architect")}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
+                      persona === "architect"
+                        ? "bg-accent text-accent-contrast shadow-sm font-semibold"
+                        : "text-ink-dim hover:text-ink hover:bg-raised"
+                    }`}
+                    title="Staff Data Architect mode"
+                  >
+                    <span>🛠️</span>
+                    <span>Staff Data Architect</span>
+                  </button>
+                </div>
+              </div>
+              <p className="text-3xs text-ink-faint hidden sm:inline">
+                {persona === "plain_english"
+                  ? "👔 Non-technical business takeaways & financial impact"
+                  : "🛠️ Deep technical specs, SQL constraints & code references"}
+              </p>
             </div>
-            <p className="mt-2 text-2xs text-ink-faint">
-              {mode === "live"
-                ? "Live answers are grounded on retrieved bundle context and rate-limited per IP. The model is told to refuse rather than guess."
-                : "Offline: answers are matched against the bundle's own catalog, audit ledger and metrics."}
-            </p>
-          </form>
+
+            <form onSubmit={handleSend} className="p-4">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={inputQuery}
+                  onChange={(e) => setInputQuery(e.target.value)}
+                  maxLength={MAX_QUESTION_CHARS}
+                  disabled={isSending}
+                  placeholder={
+                    mode === "live"
+                      ? "Ask anything about the defects, the decisions or the metrics…"
+                      : "Ask offline — answers are matched against the bundle…"
+                  }
+                  className="flex-1 rounded-lg border border-line bg-panel px-4 py-2.5 text-xs text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none disabled:opacity-60"
+                  aria-label="Question"
+                />
+                <button
+                  type="submit"
+                  disabled={isSending || inputQuery.trim() === ""}
+                  className="rounded-lg bg-accent px-5 py-2.5 text-xs font-semibold text-panel transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSending ? "Asking…" : "Send"}
+                </button>
+              </div>
+              <p className="mt-2 text-2xs text-ink-faint">
+                {mode === "live"
+                  ? "Live answers are grounded on retrieved bundle context and rate-limited per IP. The model is told to refuse rather than guess."
+                  : "Offline: answers are matched against the bundle's own catalog, audit ledger and metrics."}
+              </p>
+            </form>
+          </div>
         </div>
       )}
     </>
