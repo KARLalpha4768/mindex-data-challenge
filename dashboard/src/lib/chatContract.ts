@@ -170,6 +170,8 @@ export interface ViewContext {
   selection?: CellSelection | null;
 }
 
+export type CopilotPersona = "plain_english" | "architect";
+
 export interface ChatRequestBody {
   question: string;
   /** Oldest first. Server truncates to the most recent `MAX_HISTORY_TURNS`. */
@@ -180,6 +182,11 @@ export interface ChatRequestBody {
    * state rather than an error: retrieval then behaves exactly as before.
    */
   viewContext?: ViewContext;
+  /**
+   * Persona mode for explanation tone: "plain_english" (non-technical/executive)
+   * or "architect" (Staff Data Architect technical deep dive). Defaults to "plain_english".
+   */
+  persona?: CopilotPersona;
 }
 
 /**
@@ -412,6 +419,8 @@ export interface ChatSuccess {
    * ignored by older clients.
    */
   resolution?: ModelResolution;
+  /** Active persona mode used for this response. */
+  persona?: CopilotPersona;
 }
 
 export interface ChatFailure {

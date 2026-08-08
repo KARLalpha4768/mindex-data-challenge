@@ -145,7 +145,7 @@ export const VIEWS = [
   { id: "overview", label: "Overview", group: "core" },
   { id: "defects", label: "Defect Explorer", group: "core" },
   { id: "raw", label: "Raw vs Clean CSV", group: "core" },
-  { id: "assistant", label: "Assistant Workspace", group: "core" },
+  { id: "assistant", label: "Pipeline Copilot", group: "core" },
   { id: "profile", label: "Data Profile", group: "detail" },
   { id: "lineage", label: "Lineage", group: "detail" },
   { id: "schema", label: "Schema", group: "detail" },

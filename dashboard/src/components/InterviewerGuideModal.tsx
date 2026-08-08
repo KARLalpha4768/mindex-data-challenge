@@ -25,13 +25,24 @@ export default function InterviewerGuideModal({ isOpen, onClose }: Props) {
               managers.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-line bg-raised px-3 py-1 text-xs text-ink-dim transition-colors hover:text-ink"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="rounded-lg border border-line bg-raised px-3 py-1 text-xs text-ink-dim transition-colors hover:border-line-strong hover:text-ink flex items-center gap-1.5"
+              title="Print or export 1-page PDF briefing"
+            >
+              <span>🖨️</span>
+              <span>Print / Save PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-line bg-raised px-3 py-1 text-xs text-ink-dim transition-colors hover:text-ink"
+            >
+              Close
+            </button>
+          </div>
         </div>
 
         {/* 1-Second Local Verification Command */}

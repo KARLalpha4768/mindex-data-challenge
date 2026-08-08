@@ -123,10 +123,11 @@ import {
   type ChatStatusResponse,
   type ChatTransport,
   type ChatTurn,
+  type CopilotPersona,
   type ModelAttempt,
   type ModelResolution,
 } from "./chatContract";
-import { SYSTEM_INSTRUCTION, normaliseViewContext, selectContext } from "./grounding";
+import { getSystemInstruction, normaliseViewContext, selectContext } from "./grounding";
 import { auditAgainstContext } from "./numericAudit";
 import { clientKeyFrom, rateLimit } from "./rateLimit";
 import type { Bundle, CsvDiff } from "./types";
@@ -1988,6 +1989,7 @@ export async function handleChatPost(
     question?: unknown;
     history?: unknown;
     viewContext?: unknown;
+    persona?: unknown;
   };
   const question = typeof body.question === "string" ? body.question.trim() : "";
   if (!question) return fail("bad_request", "Field `question` is required.");
@@ -2018,6 +2020,7 @@ export async function handleChatPost(
    *     sends a shape this build does not recognise, is NOT an error: retrieval
    *     falls back to exactly what it did before view awareness existed. */
   const viewContext = normaliseViewContext(body.viewContext);
+  const persona: CopilotPersona = body.persona === "architect" ? "architect" : "plain_english";
 
   /* 3. Rate limit. After validation (so a malformed request does not consume
    *    somebody's allowance) and before the key check (so probing whether a
@@ -2073,7 +2076,7 @@ export async function handleChatPost(
   /* The transport-neutral request. What the model is asked is decided once,
    * here; how it is spelled on the wire is the transport's business. */
   const groundedRequest: GroundedRequest = {
-    systemInstruction: SYSTEM_INSTRUCTION,
+    systemInstruction: getSystemInstruction(persona),
     history,
     userTurn,
   };
@@ -2161,5 +2164,6 @@ export async function handleChatPost(
     audit,
     resolution: outcome.resolution,
     usage: outcome.answer.usage,
+    persona,
   });
 }
