@@ -3,6 +3,8 @@
 Raw CSV → profiled → audited cleaning → SQLite star schema → six SQL metrics, with a runtime proof
 that all 17 seeded data defects were found.
 
+> 🌐 **Live Vercel Application:** [https://mindex-data-challenge.vercel.app](https://mindex-data-challenge.vercel.app)
+
 **This file is the canonical reviewer guide.** Every number in it is asserted against a live run by
 `solution/scripts/check_readme_numbers.py`, which is itself run by the verification command below —
 so if a figure here has gone stale, the build fails rather than the document lying quietly.
@@ -11,6 +13,7 @@ so if a figure here has gone stale, the build fails rather than the document lyi
 
 | | |
 |---|---|
+| **Live Web App** | [https://mindex-data-challenge.vercel.app](https://mindex-data-challenge.vercel.app) |
 | **The submission** | [`solution/`](solution/) — `src/`, `tests/`, `data/raw/`, `scripts/`, `output/` |
 | **The dashboard** | [`dashboard/`](dashboard/) — Next.js evidence viewer over the same artifacts |
 | **Verify all of it** | `python scripts/verify_submission.py` — one command, no arguments |
