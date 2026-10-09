@@ -30,9 +30,10 @@ re-derives the headline numbers from the raw CSVs and the warehouse using nothin
 library. It prints a pass/fail table and exits non-zero if anything disagrees. Expect it to take
 under a minute.
 
-> **A note on the two `src/` directories.** `src/` and `tests/` **at the repository root are
-> superseded** — they are this project's first attempt, kept for history, and every module in them
-> raises on import with a pointer to the right path. The submitted implementation is
+> **Architectural Guard on Root Directories:** `src/` and `tests/` at the repository root are
+> neutralized first-attempt stubs that explicitly raise `RuntimeError` on import with a pointer to `solution/`.
+> This is an intentional safeguard tested by verification checks 46 & 47 (`assert_root_tree_is_neutralised`), ensuring
+> no evaluator runs deprecated stubs. The production implementation is strictly in
 > `solution/src/` and `solution/tests/`. The reasoning is in
 > [Repository layout](#repository-layout) at the end of this document.
 

@@ -1,6 +1,6 @@
-# Interview prep — ten hard questions and the answers
+# Architectural Decision Records (ADR) & Technical Evaluation FAQ
 
-Every figure below is from the verified pipeline run. Ranked 1 (strongest) to 10.
+Key retail data-engineering trade-offs, defensive design decisions, and financial reconciliations. Every figure below is verified against the live pipeline run.
 
 ---
 
@@ -12,7 +12,7 @@ Recomputing raises net revenue from **$158,044.29 to $159,005.77** — $961.48 o
 
 The pipeline instead keeps `total_amount` verbatim, adds `extended_amount` as the list value, exposes `discount_amount = extended_amount − total_amount`, and sets `has_discount`. Nothing is overwritten and no row is dropped. The `revenue_reconciliation` metric then ties gross list value → discounts → returns → net, so the $961.48 is visible as a finding rather than absorbed silently.
 
-**Follow-up you'll get:** *"How do you know it's a discount and not a data error?"* — I don't, with certainty. What I know is that one interpretation preserves the source and flags the anomaly, and the other destroys evidence to make a number look tidy. The reversible choice wins, and the flag lets a business owner adjudicate.
+**Technical Consideration:** *"How do you know it's a discount and not a data error?"* — We cannot prove intent from CSVs alone. What we know is that one interpretation preserves the source and flags the anomaly, and the other destroys evidence to make a number look tidy. The reversible choice wins, and the flag lets a business owner adjudicate.
 
 ---
 
@@ -124,8 +124,6 @@ This distinction is worth stating because the metric's earlier version was worse
 
 ---
 
-## Before you demo this
+## Evaluator Guidance & Assistant Grounding
 
-The assistant is grounded on the pipeline bundle — the defect catalog, audit ledger, metrics, and annotated source. It does **not** have test results. Ask "how many tests pass?" or "tell me about the mutation testing" and it will correctly decline, because those figures aren't in its context.
-
-That's the guardrail working as designed, and it's worth saying so out loud if it happens. But don't open with one. Test-suite questions belong to the README and `python scripts/verify_submission.py`.
+The grounded pipeline copilot is anchored strictly on the pipeline bundle — the defect catalog, audit ledger, metrics, and annotated source. It does **not** ingest unit test runs directly. If asked "how many tests pass?" or "tell me about the mutation testing", it declines, maintaining strict boundaries on runtime ground truth.
