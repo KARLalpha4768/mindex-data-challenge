@@ -7,11 +7,13 @@ import SqlBlock from "@/components/SqlBlock";
 import { Badge, EmptyState, ExecutiveCallout, SectionHeader, TableWrap } from "@/components/ui";
 import {
   type ColumnUnit,
+  formatCurrency,
   formatInt,
   formatMetricCell,
   humaniseColumn,
   isNumericColumn,
 } from "@/lib/format";
+import { headlineFigures, type PartialMonth } from "@/lib/publishedMetrics";
 import type { Bundle, Metric, MetricRow } from "@/lib/types";
 
 /**
@@ -63,6 +65,8 @@ export default function Analytics({
   focusMetric?: string | null;
 }) {
   const metrics = bundle.analytics?.metrics ?? {};
+  const headlines = React.useMemo(() => headlineFigures(metrics), [metrics]);
+  const factRows = bundle.run.row_counts.warehouse?.fact_sales;
   const ids = React.useMemo(() => {
     const known = METRIC_ORDER.filter((id) => id in metrics);
     const extra = Object.keys(metrics).filter((id) => !METRIC_ORDER.includes(id));
@@ -85,55 +89,106 @@ export default function Analytics({
     <div className="space-y-10">
       <section aria-labelledby="analytics-heading">
         <SectionHeader
-          title="Business Analytics & SQL Metric Engine"
-          subtitle="Declarative SQL metrics executed directly against output/warehouse.db. Every card leads with its explicit definition note and numerator/denominator rules."
+          title="Business Analytics"
+          subtitle="Each card is one SQL metric the pipeline ran against the warehouse. The headline figures are read from those rows, not typed beside them."
         />
 
         <ExecutiveCallout title="Why the metrics are SQL, not pandas">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              All 6 business intelligence metrics are executed in <strong>declarative SQL</strong> directly against the 
-              SQLite warehouse (<code className="font-mono text-ink">output/warehouse.db</code>). Metrics lead with explicit definition notes, 
-              use database indexes for sub-millisecond execution, and prove a <strong>$0.00 revenue reconciliation delta</strong> across 474 fact sales rows.
+              {formatInt(ids.length)} metrics were executed in SQL against the warehouse
+              {factRows != null ? (
+                <>
+                  {" "}
+                  (<code className="font-mono text-ink">{formatInt(factRows)}</code> fact rows)
+                </>
+              ) : null}
+              . The reconciliation delta on this page is{" "}
+              <strong>{formatCurrency(headlines.aggregateDelta)}</strong>, taken from{" "}
+              <code className="font-mono text-ink">revenue_reconciliation.aggregate_delta</code>.
             </div>
             <a
               href="#sql"
-              className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/20"
+              className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-mono text-xs font-semibold text-accent transition-colors hover:bg-accent/20"
             >
-              <span>⚡</span>
-              <span>Open SQL Playground</span>
+              Open recorded SQL
             </a>
           </div>
         </ExecutiveCallout>
 
-        {/* Executive BI KPI Headline Banner */}
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border border-line bg-panel p-3.5 space-y-1">
-            <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">Warehouse Net Revenue</div>
-            <div className="font-mono text-xl font-bold text-accent">$158,044.29</div>
-            <div className="text-3xs text-ok font-semibold">✓ 100% Reconciled ($0.00 Drift)</div>
-          </div>
-          <div className="rounded-lg border border-line bg-panel p-3.5 space-y-1">
-            <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">Top Store Revenue Leader</div>
-            <div className="font-mono text-xl font-bold text-ink">Store S011</div>
-            <div className="text-3xs text-ink-dim">$24,819.30 (61 transactions)</div>
-          </div>
-          <div className="rounded-lg border border-line bg-panel p-3.5 space-y-1">
-            <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">Category Volume Leader</div>
-            <div className="font-mono text-xl font-bold text-ink">Food & Beverage</div>
-            <div className="text-3xs text-ink-dim">242 transactions ($71,450.12)</div>
-          </div>
-          <div className="rounded-lg border border-line bg-panel p-3.5 space-y-1">
-            <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">Store Return Rate SLA</div>
-            <div className="font-mono text-xl font-bold text-ok">1.2% - 4.8%</div>
-            <div className="text-3xs text-ok font-semibold">✓ All 15 Stores within 5.0% Limit</div>
-          </div>
+          <HeadlineCard
+            label="Net revenue"
+            value={formatCurrency(headlines.netRevenue)}
+            detail={
+              headlines.discountTotal === null
+                ? "From revenue_reconciliation"
+                : `${formatCurrency(headlines.discountTotal)} of discounts kept (TX-03)`
+            }
+          />
+          <HeadlineCard
+            label="Top store, trailing 30 days"
+            value={headlines.topStore ? headlines.topStore.storeName : "—"}
+            detail={
+              headlines.topStore
+                ? `${headlines.topStore.storeId} · ${formatCurrency(headlines.topStore.netRevenue)} · ${formatInt(headlines.topStore.transactionCount)} transactions`
+                : "top_stores_recent_30d has no rows"
+            }
+          />
+          <HeadlineCard
+            label="Reconciliation delta"
+            value={formatCurrency(headlines.aggregateDelta)}
+            detail="aggregate_delta from the published tie-out"
+          />
+          <HeadlineCard
+            label="Stores over the 10% unit-return threshold"
+            value={
+              headlines.storesRated === 0
+                ? "—"
+                : `${formatInt(headlines.breaches.length)} of ${formatInt(headlines.storesRated)}`
+            }
+            detail={
+              headlines.breaches.length
+                ? headlines.breaches.map((breach) => breach.storeId).join(", ")
+                : headlines.storesRated
+                  ? "None of the rated stores exceed the threshold"
+                  : "return_rate_by_store has no rows"
+            }
+            alert={headlines.breaches.length > 0}
+          />
         </div>
       </section>
 
       {ids.map((id) => (
-        <MetricCard key={id} id={id} metric={metrics[id]} inFocus={id === focusMetric} />
+        <MetricCard
+          key={id}
+          id={id}
+          metric={metrics[id]}
+          inFocus={id === focusMetric}
+          partialMonth={headlines.partialMonth}
+          asOfDate={bundle.run.as_of_date}
+        />
       ))}
+    </div>
+  );
+}
+
+function HeadlineCard({
+  label,
+  value,
+  detail,
+  alert = false,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  alert?: boolean;
+}) {
+  return (
+    <div className="space-y-1 rounded-lg border border-line bg-panel p-3.5">
+      <div className="text-2xs font-semibold uppercase tracking-wider text-ink-faint">{label}</div>
+      <div className={`font-mono text-xl font-bold ${alert ? "text-bad" : "text-ink"}`}>{value}</div>
+      <div className="text-3xs text-ink-dim">{detail}</div>
     </div>
   );
 }
@@ -142,10 +197,14 @@ function MetricCard({
   id,
   metric,
   inFocus = false,
+  partialMonth = null,
+  asOfDate,
 }: {
   id: string;
   metric: Metric;
   inFocus?: boolean;
+  partialMonth?: PartialMonth | null;
+  asOfDate: string;
 }) {
   const columns = React.useMemo(() => {
     // Column order follows the first row's key order — the SQL SELECT list
@@ -184,11 +243,13 @@ function MetricCard({
 
         {/* The warn border and colour already carry the "caution" signal; the
             emoji that used to sit here added tone, not information. */}
-        {(id === "mom_revenue_by_category" || id === "mom_growth_by_category") && (
+        {(id === "mom_revenue_by_category" || id === "mom_growth_by_category") && partialMonth && (
           <div className="mt-2.5 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
-            <span>
-              <strong>Partial Month Warning (June 2026):</strong> As of date is <code>2026-06-02</code> (only 2 days of data for June). The apparent 96-99% revenue drop in June 2026 is an artifact of the truncated 2-day window, not an operational decline.
-            </span>
+            <strong>Partial month ({partialMonth.yearMonth}):</strong> the most any category
+            transacted in that month was {formatInt(partialMonth.daysWithData)} distinct{" "}
+            {partialMonth.daysWithData === 1 ? "date" : "dates"}, from <code>days_with_data</code>{" "}
+            on these rows. A large percentage against that month compares unequal spans. The
+            as-of date for this run is <code>{asOfDate}</code>.
           </div>
         )}
 
