@@ -80,8 +80,8 @@ export default function CommandPalette({
 
     items.push({
       id: "action-sql-sandbox",
-      title: "Interactive In-Browser SQL Sandbox",
-      subtitle: "Run live SQL queries against virtual Star Schema warehouse tables",
+      title: "Recorded SQL",
+      subtitle: "Published metric SQL and the rows the pipeline recorded for it",
       category: "Actions",
       icon: "⚡",
       badge: { text: "SQL", tone: "accent" },
