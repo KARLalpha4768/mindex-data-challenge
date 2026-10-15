@@ -1,6 +1,6 @@
 """SUPERSEDED -- cleaning-layer tests from the first attempt. Not the submitted suite.
 
-The maintained test suite is `solution/tests/` (87 tests). This file belongs to the
+The maintained test suite is `solution/tests/`. This file belongs to the
 repository-root `tests/` package, which tested the repository-root `src/` package --
 itself a superseded first attempt whose modules now raise on import.
 

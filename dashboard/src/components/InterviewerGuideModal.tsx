@@ -113,7 +113,7 @@ export default function InterviewerGuideModal({ isOpen, onClose }: Props) {
             <div className="rounded-lg border border-line bg-raised p-3.5 space-y-1.5">
               <div className="font-medium text-ink">6. Adversarial self-audit</div>
               <p className="text-ink-dim leading-relaxed">
-                Authored <code className="font-mono">VERIFICATION_REPORT.md</code> detailing mutation-tested edge cases. 46 verification checks and 87 unit tests enforced continuously via GitHub Actions CI.
+                Authored <code className="font-mono">VERIFICATION_REPORT.md</code> detailing mutation-tested edge cases. The verification gate and the pytest suite run in GitHub Actions; the validation page lists what was collected and does not badge it passed.
               </p>
             </div>
           </div>
