@@ -1,6 +1,6 @@
 """SUPERSEDED -- the repository-root ``tests/`` package is the first attempt's suite.
 
-The submitted test suite is ``solution/tests/`` -- 87 tests, including a golden
+The submitted test suite is ``solution/tests/``, including a golden
 end-to-end run against the real ``data/raw/`` CSVs with the published figures pinned.
 
 Every module in this package skips at collection with a message pointing at the right

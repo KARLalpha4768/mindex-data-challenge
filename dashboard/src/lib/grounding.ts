@@ -335,8 +335,8 @@ export const VIEW_GROUNDING: Record<string, ViewGroundingSpec> = {
   },
   tests: {
     onScreen:
-      "the validation and coverage evidence: expected-vs-detected classes, the audit ledger " +
-      "totals and the warehouse integrity controls",
+      "the validation page: the tests pytest collected (not a pass rate) and the warehouse " +
+      "controls recorded on this run, including foreign-key violations and the revenue tie-out",
     block: "validation",
   },
   raw: {

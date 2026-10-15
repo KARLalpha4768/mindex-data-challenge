@@ -678,7 +678,9 @@ def verify(keep_artifacts: bool) -> int:
         print_stage(3, stages, "test suite (solution/tests)", "ok" if ok else "FAILED",
                     elapsed, f"{count} passed" if ok else f"exit {tests.returncode}")
         report.add("pytest exit code", 0, tests.returncode, detail=tail(tests.stdout))
-        report.add("tests passed", 87, count, detail=tail(tests.stdout, 8))
+        # The expected count is the suite as it stands, including the inventory
+        # gate. A new test has to update this number; a silent shrink fails here.
+        report.add("tests passed", 88, count, detail=tail(tests.stdout, 8))
 
     # ── Stage 4: the documentation gate, on both READMEs ──────────────────────
     if not hard_failure:
