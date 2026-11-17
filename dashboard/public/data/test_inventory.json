@@ -1,0 +1,359 @@
+{
+  "command": "python -m pytest --collect-only --disable-warnings",
+  "cwd": "solution",
+  "collected": 88,
+  "tests": [
+    {
+      "nodeid": "tests/test_analytics.py::TestReturnRate::test_return_rate_exact",
+      "doc": "S001 has 4 transactions: 3 sales + 1 return."
+    },
+    {
+      "nodeid": "tests/test_analytics.py::TestNetRevenue::test_net_revenue_with_returns",
+      "doc": "Net revenue = 200 + 270 + (-100) + 100 = 470.00."
+    },
+    {
+      "nodeid": "tests/test_analytics.py::TestTopCustomersExcludesGuest::test_guest_excluded",
+      "doc": "GUEST has 1 transaction ($100) but must not appear in top customers."
+    },
+    {
+      "nodeid": "tests/test_analytics.py::TestRevenueReconciliation::test_reconciliation_ties_out",
+      "doc": "Gross 600 \u2212 discount 30 = 570; + returns (\u2212100) = net 470."
+    },
+    {
+      "nodeid": "tests/test_analytics.py::TestAvgTxnValueByRegion::test_avg_excludes_returns",
+      "doc": "Non-return transactions: TXN001=200, TXN002=270, TXN004=100."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestStoreCleaningST01::test_short_zip_padded",
+      "doc": "S003's '0938' becomes exactly '00938' and is flagged as unverifiable."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestStoreCleaningST01::test_no_store_is_lost_to_a_formatting_defect",
+      "doc": "All three stores survive ST-01."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestStoreCleaningST02::test_near_duplicate_resolved",
+      "doc": "S007 collapses to one row and 'Downtown Rochester' is elected."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestStoreCleaningST02::test_survivor_does_not_depend_on_source_row_order",
+      "doc": "Reversing the two S007 rows elects the same survivor."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestStoreCleaningST03::test_null_region_imputed",
+      "doc": "S002 (OR) becomes 'West', flagged as imputed, and no new region is invented."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestProductCleaningPR01::test_exact_duplicate_dropped",
+      "doc": "The byte-identical P002 copy is dropped; the other three products survive."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestProductCleaningPR03::test_null_category_imputed",
+      "doc": "P003's missing category becomes the literal 'Unknown', flagged as imputed."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestProductCleaningPR02::test_price_conflict_flagged",
+      "doc": "P005 collapses to one row carrying the ELECTED price 150.11."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX03::test_discount_preserved",
+      "doc": "TXN002 keeps its reported $270.00 and exposes a $30.00 discount."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX10::test_returns_preserved",
+      "doc": "TXN002 survives as a return with quantity \u22121 and total \u2212$99.99."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX06::test_guest_customer_imputed",
+      "doc": "TXN003 is kept, its customer becomes 'GUEST', and ``is_guest`` is set."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX08::test_future_dates_excluded",
+      "doc": "TXN004 (2026-07-01, past AS_OF_DATE) is quarantined under TX-08."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX07::test_zero_quantity_excluded",
+      "doc": "TXN005 (quantity 0) is quarantined and recorded under TX-07."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX04::test_orphan_store_excluded",
+      "doc": "TXN006 (store S999) is quarantined under TX-04, not loaded against 'Unknown'."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX01::test_mixed_date_formats_parsed",
+      "doc": "All three rows survive AND land on the right day."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX01::test_ambiguous_dates_resolve_by_separator_not_by_luck",
+      "doc": "'01-04-2026' and '04/01/2026' both mean 2026-04-01, by different rules."
+    },
+    {
+      "nodeid": "tests/test_cleaning.py::TestTransactionCleaningTX02::test_currency_strings_parsed",
+      "doc": "'$300.00' becomes the float 300.00, and the column is genuinely numeric."
+    },
+    {
+      "nodeid": "tests/test_dashboard_inventory.py::test_inventory_matches_pytest_collection",
+      "doc": "The committed inventory is the current collection and claims no results."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestTransactionCleaningTX05::test_orphan_product_rows_are_excluded_and_recorded",
+      "doc": "F8: the first assertion TX-05 has ever had."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestTransactionCleaningTX05::test_orphan_product_rows_are_filed_under_tx05_in_the_lineage",
+      "doc": "The row-level lineage attributes each exclusion to TX-05 specifically."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestTransactionCleaningTX05::test_lineage_file_is_written_where_the_caller_asked",
+      "doc": "F3: ``lineage_dir`` is honoured, and nothing is written outside it."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestTransactionCleaningTX05::test_lineage_dir_none_writes_nothing",
+      "doc": "``lineage_dir=None`` is the explicit \"touch no filesystem\" contract."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestTransactionCleaningTX09::test_duplicate_rows_collapse_to_one_each",
+      "doc": "F8: the first assertion TX-09 has ever had."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestTransactionCleaningTX09::test_duplicate_revenue_is_removed_exactly_once",
+      "doc": "Double-counted money is what a duplicate row actually costs."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestTransactionCleaningTX09::test_duplicates_are_disposed_as_dropped_not_quarantined",
+      "doc": "TX-09 rows carry disposition ``dropped``; TX-04/05/07/08 carry ``quarantined``."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestProductCleaningPR04::test_zero_price_imputed_to_the_category_median",
+      "doc": "F8: PR-04's first real assertion \u2014 the exact imputed value."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestProductCleaningPR04::test_zero_price_is_recorded_and_the_other_rows_are_untouched",
+      "doc": "The imputation is audited, and it affects exactly one row."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestProductCleaningPR04::test_no_surviving_product_has_a_zero_or_negative_price",
+      "doc": "``dim_product.list_unit_price`` CHECK (> 0) is satisfied before the load."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestProductCleaningPR02ElectsMax::test_higher_price_is_elected_by_policy",
+      "doc": "M2 killer at the unit level: 150.11 wins, 141.61 does not."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestProductCleaningPR02ElectsMax::test_conflict_is_not_counted_as_an_exact_duplicate",
+      "doc": "PR-02 must not be misfiled as PR-01 \u2014 that was the previous solution's bug #4."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestZipPaddingGuard::test_non_paddable_zip_is_left_untouched",
+      "doc": "M12 killer: ``\"N/A\"`` must stay ``\"N/A\"``, never become ``\"00N/A\"``."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestZipPaddingGuard::test_every_malformed_zip_is_flagged_including_the_unpaddable_ones",
+      "doc": "Suspicion is recorded on all three bad ZIPs, not only the paddable one."
+    },
+    {
+      "nodeid": "tests/test_defect_gaps.py::TestZipPaddingGuard::test_padding_does_not_alter_the_row_count",
+      "doc": "ST-01 never drops a store. Losing a store to a formatting defect trades"
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRowBudget::test_row_counts_exact",
+      "doc": "Pin the shape of all three cleaned datasets."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRowBudget::test_warehouse_table_counts_exact",
+      "doc": "The star schema holds exactly the surviving rows \u2014 no fan-out, no loss."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRowBudget::test_lineage_budget_balances",
+      "doc": "474 + 16 + 15 = 505, with the per-reason breakdown pinned."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRowBudget::test_source_rows_are_a_complete_gapless_range",
+      "doc": "``source_row`` covers 0..504 with no gaps and no repeats."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRowBudget::test_drop_reasons_are_mutually_disjoint",
+      "doc": "No source row carries two reason codes, so 505 \u2212 31 = 474 double-counts nothing."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRevenue::test_net_revenue_exact_to_the_cent",
+      "doc": "SUM(fact_sales.net_amount) == $158,044.29."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRevenue::test_tx03_discount_total_exact",
+      "doc": "TX-03: 20 discounted rows carrying $961.48 of discount, preserved not recomputed."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRevenue::test_reconciliation_columns_tie_out_by_hand",
+      "doc": "gross 168,957.80 \u2212 discount 961.48 + returns (\u22129,952.03) = net 158,044.29."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRevenue::test_returns_are_preserved_and_signed",
+      "doc": "TX-10: all 30 returns load with negative money totalling \u2212$9,952.03."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenPR02PriceSeparation::test_dim_product_elects_the_higher_list_price",
+      "doc": "M2 killer: ``dim_product.P005.list_unit_price == 150.11``, never 141.61."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenPR02PriceSeparation::test_fact_rows_carry_the_transacted_price_not_the_dimension_price",
+      "doc": "All 19 kept P005 fact rows ring at 141.61 \u2014 the price actually charged."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenPR02PriceSeparation::test_pr04_shows_the_same_separation",
+      "doc": "PR-04: P027's dimension price is the imputed category median, not the transacted price."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRecentWindow::test_window_is_thirty_days_inclusive_of_both_ends",
+      "doc": "M5/M18 killer #1: the boundary convention, stated as an assertion."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRecentWindow::test_window_contains_exactly_181_fact_rows",
+      "doc": "M5/M18 killer #2: the population the ranking is computed over."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRecentWindow::test_top_five_store_ranking_is_exact_and_ordered",
+      "doc": "M5/M18 killer #3: the published leaderboard, membership and order."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRecentWindow::test_no_transaction_is_dated_after_as_of",
+      "doc": "TX-08 held the line: nothing in the fact table post-dates AS_OF_DATE."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenRecentWindow::test_june_has_exactly_one_day_of_data",
+      "doc": "F9: 2026-06 contains a single date, which is why its MoM change is \u221298.73%."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenDefectCoverage::test_run_reports_no_coverage_mismatches",
+      "doc": "The pipeline's own build gate passes on the real data."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenDefectCoverage::test_all_seventeen_codes_detected_with_expected_counts",
+      "doc": "Each of the 17 codes, with its exact detected count, checked one by one."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenDefectCoverage::test_catalog_expected_counts_match_the_seed",
+      "doc": "The catalog's own ``expected_count`` values agree with seed_data.py."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenArtifacts::test_every_named_artifact_lands_under_the_output_dir",
+      "doc": "All six top-level artifacts exist inside the requested output directory."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenArtifacts::test_lineage_csv_follows_the_output_dir",
+      "doc": "F3 killer: ``transactions__lineage.csv`` is written under ``--output-dir``."
+    },
+    {
+      "nodeid": "tests/test_golden_end_to_end.py::TestGoldenArtifacts::test_all_six_metrics_are_present_with_expected_row_counts",
+      "doc": "The analytics payload's shape, pinned: six metrics, exact row counts."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestMetricIdContract::test_registry_ids_match_the_contract_exactly",
+      "doc": "F11: no extra ids, no missing ids, no old spellings."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestMetricIdContract::test_sql_ref_strings_agree_with_the_registry",
+      "doc": "Every metric carries a resolvable ``sql`` body and a ``sql_ref`` pointer."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestRecentWindowBoundary::test_window_length_and_start",
+      "doc": "M5 killer: ``RECENT_WINDOW_DAYS`` is 30 and the start is AS_OF \u2212 29."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestRecentWindowBoundary::test_window_start_is_derived_not_hardcoded[as_of0-expected_start0]",
+      "doc": "The 30-day span holds for any reference date, including awkward ones."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestRecentWindowBoundary::test_window_start_is_derived_not_hardcoded[as_of1-expected_start1]",
+      "doc": "The 30-day span holds for any reference date, including awkward ones."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestRecentWindowBoundary::test_window_start_is_derived_not_hardcoded[as_of2-expected_start2]",
+      "doc": "The 30-day span holds for any reference date, including awkward ones."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestRecentWindowBoundary::test_window_excludes_rows_on_both_sides_of_the_boundary",
+      "doc": "M18 killer: four probe rows, one on each side of each boundary."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestRecentWindowBoundary::test_window_start_appears_in_the_sql_as_a_bound_parameter",
+      "doc": "Both boundary parameters are actually referenced by the query."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestReconciliationDeltaIsFalsifiable::test_metric_exposes_both_required_delta_columns",
+      "doc": "F7: ``line_level_delta`` and ``aggregate_delta`` replace the tautology."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestReconciliationDeltaIsFalsifiable::test_all_deltas_are_zero_on_consistent_data",
+      "doc": "The happy path: correct data reconciles to 0.00 on every delta."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestReconciliationDeltaIsFalsifiable::test_line_level_delta_reports_the_exact_invented_amount",
+      "doc": "M6 killer, primary: \u2212$5.00 of invented revenue must show up as \u2212$5.00."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestReconciliationDeltaIsFalsifiable::test_aggregate_delta_reports_the_invented_amount_too",
+      "doc": "M6 killer, secondary: the aggregate tie-out must also break."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestReconciliationDeltaIsFalsifiable::test_at_least_one_delta_is_non_zero_whenever_the_data_lies",
+      "doc": "Implementation-independent backstop: something must ring."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestReconciliationDeltaIsFalsifiable::test_deltas_do_not_serialise_as_negative_zero",
+      "doc": "F15: a tie-out of zero must render \"0.0\", never \"-0.0\"."
+    },
+    {
+      "nodeid": "tests/test_metric_contracts.py::TestReconciliationDeltaIsFalsifiable::test_schema_rejects_the_inconsistent_row",
+      "doc": "The production CHECK constraints would refuse the fixture above."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerStandardCases::test_row_and_column_counts",
+      "doc": "Profile reports the exact shape of the input DataFrame."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerStandardCases::test_null_counts_and_percentages",
+      "doc": "Nulls are counted per column with correct percentages."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerStandardCases::test_duplicate_row_count",
+      "doc": "Exact duplicate rows are counted correctly."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerStandardCases::test_numeric_stats_min_max_mean",
+      "doc": "Numeric columns report min, max, mean, zero count, negative count."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerEdgeCases::test_empty_dataframe",
+      "doc": "An empty DataFrame (0 rows, N columns) is profiled without error."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerEdgeCases::test_all_null_column",
+      "doc": "A column that is 100% NULL still reports correctly."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerEdgeCases::test_none_dataframe_raises_type_error",
+      "doc": "Passing None as the DataFrame raises TypeError."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerEdgeCases::test_single_row_dataframe",
+      "doc": "A one-row DataFrame does not produce degenerate statistics."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerDateDetection::test_mixed_format_column_is_typed_as_a_date",
+      "doc": "A column of three date encodings is classified ``date``, not free text."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerDateDetection::test_report_counts_the_rows_a_single_parse_would_destroy",
+      "doc": "TX-01 evidence: ``rows_lost_to_single_format`` is 2 of 3 observable rows."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerDateDetection::test_single_format_column_loses_nothing",
+      "doc": "A clean ISO column reports one format and zero rows at risk."
+    },
+    {
+      "nodeid": "tests/test_profiler.py::TestProfilerDateDetection::test_future_dates_are_counted_against_the_reference_date",
+      "doc": "TX-08 evidence: dates past AS_OF_DATE are counted before any cleaning."
+    }
+  ]
+}

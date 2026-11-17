@@ -24,7 +24,7 @@ python scripts/verify_submission.py
 ```
 
 That single command runs the full pipeline into a temporary directory, runs the
-<!-- fig:test_count -->87<!-- /fig -->-test suite, re-checks every published figure in this document
+<!-- fig:test_count -->88<!-- /fig -->-test suite, re-checks every published figure in this document
 and in `solution/README.md` against the artifacts it just produced, and then independently
 re-derives the headline numbers from the raw CSVs and the warehouse using nothing but the standard
 library. It prints a pass/fail table and exits non-zero if anything disagrees. Expect it to take
@@ -84,7 +84,7 @@ from:
 ```bash
 cd solution
 python -m src.pipeline                   # full run -> solution/output
-python -m pytest -q                      # 87 tests
+python -m pytest -q                      # 88 tests
 python scripts/check_readme_numbers.py --readme ../README.md   # assert THIS file against the run
 python scripts/check_readme_numbers.py                         # and solution/README.md too
 ```
@@ -100,7 +100,7 @@ python scripts/check_readme_numbers.py --output-dir /tmp/run --readme ../README.
 The test suite also runs from the repository root without changing directory:
 
 ```bash
-python -m pytest solution/tests -q       # 87 tests
+python -m pytest solution/tests -q       # 88 tests
 ```
 
 Useful pipeline flags: `--as-of YYYY-MM-DD` (reference date), `--raw-dir DIR`,
@@ -538,7 +538,7 @@ Covered in full under TX-03 above.
 
 ## Testing
 
-<!-- fig:test_count -->87<!-- /fig --> tests, all passing. Run with `python -m pytest solution/tests -q` from the repository root, or
+<!-- fig:test_count -->88<!-- /fig --> tests, all passing. Run with `python -m pytest solution/tests -q` from the repository root, or
 `python -m pytest -q` from inside `solution/`.
 
 | Module | What it defends |
@@ -699,7 +699,7 @@ solution/                      ===== THE SUBMISSION =====
       queries.py               six named SQL constants + the metric registry
       runner.py                executes and serialises to analytics.json
     pipeline.py                six-stage orchestration + the coverage gate
-  tests/                       87 tests, including a golden end-to-end run
+  tests/                       88 tests, including a golden end-to-end run
   output/                      generated artifacts
   README.md                    the same document as this one, path-relative to solution/
 
@@ -749,5 +749,5 @@ back into something importable.
 One consequence worth stating: `solution/tests/` and the root `tests/` are both importable packages
 literally named `tests`, so pytest derives the same module name for both conftest files. The root
 `tests/conftest.py` releases that name once it has loaded, which is why `pytest` typed at the
-repository root still runs the 87 submitted tests instead of aborting on an import collision. The
+repository root still runs the 88 submitted tests instead of aborting on an import collision. The
 mechanism and the reasoning are commented in that file.

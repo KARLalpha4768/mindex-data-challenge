@@ -69,8 +69,8 @@ export default function CommandPalette({
 
     items.push({
       id: "action-export-center",
-      title: "Export Artifacts & Clean CSVs",
-      subtitle: "Download warehouse datasets, quarantine records, or catalog JSON",
+      title: "Export recorded artifacts",
+      subtitle: "Download the bundle's metrics, catalog, and audit — not a synthesized warehouse",
       category: "Actions",
       icon: "📥",
       badge: { text: "Download", tone: "accent" },
