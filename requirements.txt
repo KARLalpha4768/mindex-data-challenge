@@ -18,7 +18,7 @@ pandas>=2.0,<3.0        # DataFrame engine. Pinned <3.0 because pandas 3 changes
                         # depends on exact null and dtype behaviour.
 numpy>=1.24             # Transitively required by pandas; imported directly by
                         # solution/src/io_utils.py to serialise numpy scalars to JSON.
-pytest>=7.4             # The 87-test suite in solution/tests/, and the live test-count
+pytest>=7.4             # The suite in solution/tests/, and the live test-count
                         # probe in solution/scripts/check_readme_numbers.py.
 
 # Optional, not required to run or verify anything:

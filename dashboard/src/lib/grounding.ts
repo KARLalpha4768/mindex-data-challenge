@@ -333,10 +333,16 @@ export const VIEW_GROUNDING: Record<string, ViewGroundingSpec> = {
       "its SQL and its result rows",
     block: "metrics",
   },
+  sql: {
+    onScreen:
+      "the recorded SQL for each published metric, with the rows that run already wrote. " +
+      "Editing the statement does not execute it; only an unchanged published statement shows rows",
+    block: "metrics",
+  },
   tests: {
     onScreen:
-      "the validation and coverage evidence: expected-vs-detected classes, the audit ledger " +
-      "totals and the warehouse integrity controls",
+      "the validation page: the tests pytest collected (not a pass rate) and the warehouse " +
+      "controls recorded on this run, including foreign-key violations and the revenue tie-out",
     block: "validation",
   },
   raw: {

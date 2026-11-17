@@ -1,5 +1,15 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import Dashboard from "@/components/Dashboard";
 import { buildDefectViews, discountImpact, loadBundle } from "@/lib/bundle";
+import { parseTestInventory, type TestInventory } from "@/lib/reviewerEvidence";
+
+function loadTestInventory(): TestInventory | null {
+  const file = path.join(process.cwd(), "public", "data", "test_inventory.json");
+  if (!fs.existsSync(file)) return null;
+  return parseTestInventory(JSON.parse(fs.readFileSync(file, "utf8")));
+}
 
 /**
  * The only route.
@@ -24,6 +34,7 @@ export default function Page() {
   const { bundle, sourceFile, isMock } = loadBundle();
   const defects = buildDefectViews(bundle);
   const discount = discountImpact(bundle);
+  const testInventory = loadTestInventory();
 
   return (
     <Dashboard
@@ -32,6 +43,7 @@ export default function Page() {
       discountImpact={discount}
       sourceFile={sourceFile}
       isMock={isMock}
+      testInventory={testInventory}
     />
   );
 }

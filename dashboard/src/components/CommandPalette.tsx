@@ -69,8 +69,8 @@ export default function CommandPalette({
 
     items.push({
       id: "action-export-center",
-      title: "Export Artifacts & Clean CSVs",
-      subtitle: "Download warehouse datasets, quarantine records, or catalog JSON",
+      title: "Export recorded artifacts",
+      subtitle: "Download the bundle's metrics, catalog, and audit — not a synthesized warehouse",
       category: "Actions",
       icon: "📥",
       badge: { text: "Download", tone: "accent" },
@@ -80,8 +80,8 @@ export default function CommandPalette({
 
     items.push({
       id: "action-sql-sandbox",
-      title: "Interactive In-Browser SQL Sandbox",
-      subtitle: "Run live SQL queries against virtual Star Schema warehouse tables",
+      title: "Recorded SQL",
+      subtitle: "Published metric SQL and the rows the pipeline recorded for it",
       category: "Actions",
       icon: "⚡",
       badge: { text: "SQL", tone: "accent" },

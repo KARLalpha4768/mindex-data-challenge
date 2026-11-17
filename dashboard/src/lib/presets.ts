@@ -665,6 +665,10 @@ export const PAGE_PROMPTS: Record<string, PagePrompt[]> = {
     { chip: "Why do stores breach 10%?", question: "Why do several stores breach the 10% return-rate threshold, and does the choice of denominator change which ones?", scriptedHint: "TX-10" },
     { chip: "Which figures are controls?", question: "Which numbers on this page are controls rather than findings, and what would make them non-zero?", scriptedHint: "revenue_reconciliation" },
   ],
+  sql: [
+    { chip: "Explain this page", question: "Explain what the Recorded SQL page is showing me, and what happens if I edit the statement." },
+    { chip: "Where do these rows come from?", question: "Are the rows under a published statement executed in the browser, or recorded by the pipeline?" },
+  ],
   tests: [
     { chip: "Explain this page", question: "Explain what this validation page proves and what it does not prove." },
     { chip: "How is coverage checked?", question: "How is defect coverage reconciled here — expected against detected — and what happens on a mismatch?" },

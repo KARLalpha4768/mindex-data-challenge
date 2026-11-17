@@ -1,6 +1,6 @@
 """SUPERSEDED -- the first attempt's pytest fixtures. Not part of the submitted suite.
 
-The submitted test suite is ``solution/tests/`` -- 87 tests, including a golden
+The submitted test suite is ``solution/tests/``, including a golden
 end-to-end run against the real ``data/raw/`` CSVs with every published figure pinned.
 This file belongs to the repository-root ``tests/`` package, which exercised the
 repository-root ``src/`` package: itself a superseded first attempt whose modules now
@@ -12,7 +12,7 @@ This conftest does two jobs, and neither of them is providing fixtures:
    and says so in the session header, because a silently skipped directory is
    indistinguishable from one that was never there.
 2. It resolves the ``tests`` package-name collision described below, so that a
-   reviewer who simply types ``pytest`` at the repository root gets the 87 submitted
+   reviewer who simply types ``pytest`` at the repository root gets the submitted
    tests instead of an ``ImportPathMismatchError``.
 
 WHY ``collect_ignore_glob`` AND NOT ``pytest.skip(allow_module_level=True)``

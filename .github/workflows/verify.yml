@@ -21,10 +21,43 @@ jobs:
           python-version: "3.13"
 
       - name: Install Dependencies
+        # The pinned set the README tells reviewers to install (pandas < 3).
         run: |
           python -m pip install --upgrade pip
-          pip install pandas pytest
+          pip install -r requirements.txt
 
       - name: Run Verification Suite (47 Checks)
         run: |
           python scripts/verify_submission.py
+
+  dashboard:
+    name: Dashboard (typecheck, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1

@@ -18,6 +18,7 @@ import TestResults from "@/components/TestResults";
 import { Badge, CopyButton } from "@/components/ui";
 import { VIEWS, type ViewId } from "@/lib/config";
 import { formatTimestamp } from "@/lib/format";
+import type { TestInventory } from "@/lib/reviewerEvidence";
 import type { Bundle, DefectView } from "@/lib/types";
 
 /**
@@ -59,6 +60,7 @@ interface Props {
   discountImpact: number | null;
   sourceFile: string;
   isMock: boolean;
+  testInventory: TestInventory | null;
 }
 
 /** Parsed representation of the URL hash. */
@@ -143,6 +145,7 @@ export default function Dashboard({
   discountImpact,
   sourceFile,
   isMock,
+  testInventory,
 }: Props) {
   // Start on the default route on both server and first client render so the
   // markup matches; the effect below then applies whatever hash the URL carries.
@@ -509,7 +512,7 @@ export default function Dashboard({
 
         {route.view === "sql" && <SqlSandbox bundle={bundle} />}
 
-        {route.view === "tests" && <TestResults bundle={bundle} />}
+        {route.view === "tests" && <TestResults bundle={bundle} inventory={testInventory} />}
 
         {route.view === "raw" && (
           <RawVsCleanInspector
